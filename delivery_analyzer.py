@@ -23,7 +23,7 @@ from openpyxl.styles import Font
 from openpyxl.utils.dataframe import dataframe_to_rows
 
 # ==============================================
-# Helper Functions (Keep These)
+# Helper Functions
 # ==============================================
 def normalize_diacritics(text):
     diacritic_map = {'č':'c', 'š':'s', 'ž':'z', 'Č':'c', 'Š':'s', 'Ž':'z'}
@@ -417,21 +417,21 @@ def generate_reports(manifest_df, output_path, weight_thr=70, vol_weight_thr=150
     wth_mpcs_report.to_excel(f"{output_path}/WTH_MPCS_Report_{timestamp}.xlsx", index=False)
 
     # ==============================================
-    # Priority Shipments Report (Formatted with headers)
+    # Priority Shipments Report (Formatted with headers, ZIP ascending)
     # ==============================================
     if 'PCC' in manifest_df.columns:
         priority_pccs = manifest_df[
             manifest_df['PCC'].isin(['CMX', 'WMX', 'TDT', 'TDY'])
         ].copy()
         
-        # Split and sort groups
+        # Split and sort groups - ZIP ascending now!
         group1 = priority_pccs[priority_pccs['PCC'].isin(['CMX', 'WMX'])].sort_values(
             by=['CONSIGNEE_ZIP', 'MATCHED_ROUTE'], 
-            ascending=[False, True]  # ZIP descending, route A-Z
+            ascending=[True, True]  # ZIP ascending, route A-Z
         )
         group2 = priority_pccs[priority_pccs['PCC'].isin(['TDT', 'TDY'])].sort_values(
             by=['CONSIGNEE_ZIP', 'MATCHED_ROUTE'],
-            ascending=[False, True]
+            ascending=[True, True]
         )
 
         # Create formatted Excel file
