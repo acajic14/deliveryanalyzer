@@ -180,7 +180,7 @@ def process_manifest(file):
         'Cnee Zip': 'CONSIGNEE_ZIP',
         'Cnee City': 'CONSIGNEE_CITY',
         'Cnee Str #': 'HOUSE_NUMBER',
-        'BK': 'PCC'  # Added PCC mapping from column BK
+        'PCC': 'PCC'  # Direct mapping for PCC column
     }
 
     new_df = pd.DataFrame()
@@ -190,6 +190,10 @@ def process_manifest(file):
         else:
             if new_col in ['HWB', 'CONSIGNEE_ZIP', 'WEIGHT', 'PIECES', 'PCC']:
                 new_df[new_col] = None
+
+    # Normalize PCC values
+    if 'PCC' in new_df.columns:
+        new_df['PCC'] = new_df['PCC'].astype(str).str.strip().str.upper()
 
     street1 = new_df['CONSIGNEE_STREET1'] if 'CONSIGNEE_STREET1' in new_df.columns else pd.Series('', index=new_df.index)
     street2 = new_df['CONSIGNEE_STREET2'] if 'CONSIGNEE_STREET2' in new_df.columns else pd.Series('', index=new_df.index)
