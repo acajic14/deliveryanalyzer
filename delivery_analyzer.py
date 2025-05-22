@@ -18,9 +18,12 @@ import pandas as pd
 from datetime import datetime
 import re
 from rapidfuzz import fuzz, process
+from openpyxl import Workbook
+from openpyxl.styles import Font
+from openpyxl.utils.dataframe import dataframe_to_rows
 
 # ==============================================
-# Helper Functions 
+# Helper Functions (Keep These)
 # ==============================================
 def normalize_diacritics(text):
     diacritic_map = {'č':'c', 'š':'s', 'ž':'z', 'Č':'c', 'Š':'s', 'Ž':'z'}
@@ -180,7 +183,7 @@ def process_manifest(file):
         'Cnee Zip': 'CONSIGNEE_ZIP',
         'Cnee City': 'CONSIGNEE_CITY',
         'Cnee Str #': 'HOUSE_NUMBER',
-        'PCC': 'PCC'  # Direct mapping for PCC column
+        'PCC': 'PCC'
     }
 
     new_df = pd.DataFrame()
@@ -191,7 +194,6 @@ def process_manifest(file):
             if new_col in ['HWB', 'CONSIGNEE_ZIP', 'WEIGHT', 'PIECES', 'PCC']:
                 new_df[new_col] = None
 
-    # Normalize PCC values
     if 'PCC' in new_df.columns:
         new_df['PCC'] = new_df['PCC'].astype(str).str.strip().str.upper()
 
@@ -415,36 +417,67 @@ def generate_reports(manifest_df, output_path, weight_thr=70, vol_weight_thr=150
     wth_mpcs_report.to_excel(f"{output_path}/WTH_MPCS_Report_{timestamp}.xlsx", index=False)
 
     # ==============================================
-    # Priority Shipments Report (PCC-based sorting)
+    # Priority Shipments Report (Formatted with headers)
     # ==============================================
     if 'PCC' in manifest_df.columns:
         priority_pccs = manifest_df[
             manifest_df['PCC'].isin(['CMX', 'WMX', 'TDT', 'TDY'])
         ].copy()
         
-        group1 = priority_pccs[priority_pccs['PCC'].isin(['CMX', 'WMX'])]
-        group2 = priority_pccs[priority_pccs['PCC'].isin(['TDT', 'TDY'])]
-        
-        group1_sorted = group1.sort_values(
-            by=['CONSIGNEE_ZIP', 'CONSIGNEE_NAME'],
-            ascending=[True, True]
+        # Split and sort groups
+        group1 = priority_pccs[priority_pccs['PCC'].isin(['CMX', 'WMX'])].sort_values(
+            by=['CONSIGNEE_ZIP', 'MATCHED_ROUTE'], 
+            ascending=[False, True]  # ZIP descending, route A-Z
         )
-        
-        group2_sorted = group2.sort_values(
-            by=['CONSIGNEE_ZIP', 'CONSIGNEE_NAME'],
-            ascending=[True, True]
+        group2 = priority_pccs[priority_pccs['PCC'].isin(['TDT', 'TDY'])].sort_values(
+            by=['CONSIGNEE_ZIP', 'MATCHED_ROUTE'],
+            ascending=[False, True]
         )
+
+        # Create formatted Excel file
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Priority Shipments"
         
-        priority_report = pd.concat([group1_sorted, group2_sorted])
+        # Column order with MATCHED_ROUTE first
+        cols = ['MATCHED_ROUTE', 'HWB', 'CONSIGNEE_NAME', 'CONSIGNEE_ZIP', 'PCC', 'WEIGHT', 'VOLUMETRIC_WEIGHT', 'PIECES']
         
-        priority_report = priority_report[[
-            'HWB', 'CONSIGNEE_NAME', 'CONSIGNEE_ZIP', 'PCC',
-            'WEIGHT', 'VOLUMETRIC_WEIGHT', 'PIECES'
-        ]]
+        # Header styling
+        header_font = Font(bold=True)
+
+        # CMX/WMX Section
+        ws['A1'] = "CMX/WMX Priority Shipments"
+        ws['A1'].font = header_font
         
-        priority_report.to_excel(f"{output_path}/Priority_Shipments_{timestamp}.xlsx", index=False)
-    else:
-        st.warning("PCC column not found in manifest - skipping priority report")
+        # Write headers starting at row 3
+        ws.append([])  # Empty row
+        for col_idx, col in enumerate(cols, 1):
+            ws.cell(row=3, column=col_idx, value=col).font = header_font
+        
+        # Write group1 data starting at row 4
+        for row_idx, row in enumerate(dataframe_to_rows(group1[cols], index=False, header=False), 4):
+            for col_idx, value in enumerate(row, 1):
+                ws.cell(row=row_idx, column=col_idx, value=value)
+
+        # Add spacing (3 rows)
+        last_row = ws.max_row + 3
+        
+        # TDT/TDY Section
+        ws.cell(row=last_row, column=1, value="TDT/TDY Priority Shipments").font = header_font
+        ws.append([])  # Empty row
+        
+        # Write headers again
+        for col_idx, col in enumerate(cols, 1):
+            ws.cell(row=last_row + 2, column=col_idx, value=col).font = header_font
+        
+        # Write group2 data
+        for row_idx, row in enumerate(dataframe_to_rows(group2[cols], index=False, header=False), last_row + 3):
+            for col_idx, value in enumerate(row, 1):
+                ws.cell(row=row_idx, column=col_idx, value=value)
+
+        # Save file
+        priority_file = f"{output_path}/Priority_Shipments_{timestamp}.xlsx"
+        wb.save(priority_file)
 
     return timestamp
 
