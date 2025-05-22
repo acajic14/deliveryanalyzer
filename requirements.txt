@@ -1,0 +1,4 @@
+rapidfuzz
+pandas
+openpyxl
+xlrd
