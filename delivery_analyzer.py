@@ -1,14 +1,27 @@
+# ==============================================
+# PyInstaller Workaround & Warnings Suppression
+# ==============================================
+import sys
+import os
+
+if getattr(sys, 'frozen', False):
+    sys.argv = [sys.argv[0], "run"]
+    os.environ['STREAMLIT_RUNNING_VIA_PYINSTALLER'] = 'true'
+    os.environ['STREAMLIT_SERVER_ENABLE_STATIC_SERVE'] = 'true'
+    os.environ['STREAMLIT_SERVER_ENABLE_XSRF_PROTECTION'] = 'false'
+
+# ==============================================
+# Main Imports
+# ==============================================
 import streamlit as st
 import pandas as pd
 from datetime import datetime
-import os
 import re
 from rapidfuzz import fuzz, process
 
-# ==============================
-# Helper Functions (Keep These)
-# ==============================
-
+# ==============================================
+# Helper Functions 
+# ==============================================
 def normalize_diacritics(text):
     diacritic_map = {'č':'c', 'š':'s', 'ž':'z', 'Č':'c', 'Š':'s', 'Ž':'z'}
     return ''.join(diacritic_map.get(c, c) for c in text)
@@ -48,7 +61,8 @@ def normalize_consignee_name(name):
     name = name.lower().strip()
     name = re.sub(r'[.,]', '', name)
     suffixes = [
-        'doo', 'd o o', 'd.o.o', 'd.o.o.', 'd d', 'd.d.', 'd.d', 'dno', 'd.n.o.', 'd.n.o', 'ddoo', 'ltd', 'limited', 'llc', 'gmbh', 'inc'
+        'doo', 'd o o', 'd.o.o', 'd.o.o.', 'd d', 'd.d.', 'd.d', 'dno', 'd.n.o.', 'd.n.o', 'ddoo', 
+        'ltd', 'limited', 'llc', 'gmbh', 'inc'
     ]
     for suffix in suffixes:
         pattern = r'\s*' + re.escape(suffix) + r'$'
@@ -73,6 +87,9 @@ def house_number_to_float(hn):
         base += (ord(letter_part) - ord('a') + 1) * 0.01
     return base
 
+# ==============================================
+# Route Database Loading
+# ==============================================
 def load_street_city_routes(path):
     try:
         df = pd.read_excel(path)
@@ -85,7 +102,7 @@ def load_street_city_routes(path):
         df['STREET_CLEAN'] = df['STREET'].apply(clean_street_name)
         return df
     except Exception as e:
-        st.error(f"Street-city routes file error: {str(e)}")
+        st.error(f"Street-city routes error: {str(e)}")
         return pd.DataFrame()
 
 def load_zip_routes_xls(path):
@@ -108,7 +125,7 @@ def load_zip_routes_xls(path):
             zip_sheets[sheet] = df
         return zip_sheets
     except Exception as e:
-        st.error(f"ZIP routes file error: {str(e)}")
+        st.error(f"ZIP routes error: {str(e)}")
         return {}
 
 def load_fallback_routes(path):
@@ -121,6 +138,9 @@ def load_fallback_routes(path):
         st.error(f"Fallback routes error: {str(e)}")
         return pd.DataFrame()
 
+# ==============================================
+# Manifest Processing
+# ==============================================
 def parse_pieces(value):
     try:
         value_str = str(value).replace('\\', '/')
@@ -159,7 +179,8 @@ def process_manifest(file):
         'Cnee Addr Ln 2': 'CONSIGNEE_STREET2',
         'Cnee Zip': 'CONSIGNEE_ZIP',
         'Cnee City': 'CONSIGNEE_CITY',
-        'Cnee Str #': 'HOUSE_NUMBER'
+        'Cnee Str #': 'HOUSE_NUMBER',
+        'BK': 'PCC'  # Added PCC mapping from column BK
     }
 
     new_df = pd.DataFrame()
@@ -167,7 +188,7 @@ def process_manifest(file):
         if orig_col in df.columns:
             new_df[new_col] = df[orig_col]
         else:
-            if new_col in ['HWB', 'CONSIGNEE_ZIP', 'WEIGHT', 'PIECES']:
+            if new_col in ['HWB', 'CONSIGNEE_ZIP', 'WEIGHT', 'PIECES', 'PCC']:
                 new_df[new_col] = None
 
     street1 = new_df['CONSIGNEE_STREET1'] if 'CONSIGNEE_STREET1' in new_df.columns else pd.Series('', index=new_df.index)
@@ -201,6 +222,9 @@ def process_manifest(file):
     new_df['CONSIGNEE_NAME_NORM'] = new_df['CONSIGNEE_NAME'].apply(normalize_consignee_name)
     return new_df
 
+# ==============================================
+# Route Matching Logic
+# ==============================================
 def match_address_to_route(manifest_df, street_city_routes, zip_sheets, fallback_routes):
     manifest_df['MATCHED_ROUTE'] = None
     manifest_df['MATCH_METHOD'] = None
@@ -257,6 +281,9 @@ def match_address_to_route(manifest_df, street_city_routes, zip_sheets, fallback
 
     return manifest_df
 
+# ==============================================
+# Report Generation
+# ==============================================
 def fuzzy_group_names(df, group_col='CONSIGNEE_NAME_NORM', threshold=90):
     grouped_data = []
     processed = set()
@@ -376,46 +403,77 @@ def generate_reports(manifest_df, output_path, weight_thr=70, vol_weight_thr=150
 
     special_cases.to_excel(f"{output_path}/special_cases_{timestamp}.xlsx", index=False)
     matching_details.to_excel(f"{output_path}/matching_details_{timestamp}.xlsx", index=False)
+
+    # ==============================================
+    # WTH MPCS Report (Special Cases sorted by Pieces descending)
+    # ==============================================
+    wth_mpcs_report = special_cases.sort_values('PIECES', ascending=False)
+    wth_mpcs_report.to_excel(f"{output_path}/WTH_MPCS_Report_{timestamp}.xlsx", index=False)
+
+    # ==============================================
+    # Priority Shipments Report (PCC-based sorting)
+    # ==============================================
+    if 'PCC' in manifest_df.columns:
+        priority_pccs = manifest_df[
+            manifest_df['PCC'].isin(['CMX', 'WMX', 'TDT', 'TDY'])
+        ].copy()
+        
+        group1 = priority_pccs[priority_pccs['PCC'].isin(['CMX', 'WMX'])]
+        group2 = priority_pccs[priority_pccs['PCC'].isin(['TDT', 'TDY'])]
+        
+        group1_sorted = group1.sort_values(
+            by=['CONSIGNEE_ZIP', 'CONSIGNEE_NAME'],
+            ascending=[True, True]
+        )
+        
+        group2_sorted = group2.sort_values(
+            by=['CONSIGNEE_ZIP', 'CONSIGNEE_NAME'],
+            ascending=[True, True]
+        )
+        
+        priority_report = pd.concat([group1_sorted, group2_sorted])
+        
+        priority_report = priority_report[[
+            'HWB', 'CONSIGNEE_NAME', 'CONSIGNEE_ZIP', 'PCC',
+            'WEIGHT', 'VOLUMETRIC_WEIGHT', 'PIECES'
+        ]]
+        
+        priority_report.to_excel(f"{output_path}/Priority_Shipments_{timestamp}.xlsx", index=False)
+    else:
+        st.warning("PCC column not found in manifest - skipping priority report")
+
     return timestamp
 
-# ==============================
+# ==============================================
 # Streamlit UI
-# ==============================
-
+# ==============================================
 def main():
     st.title("🚚 Delivery Route Analyzer")
     st.sidebar.header("Settings")
     
-    # Threshold controls
     weight_thr = st.sidebar.number_input("Weight Threshold (kg)", value=70)
     vol_weight_thr = st.sidebar.number_input("Volumetric Weight Threshold (kg)", value=150)
     pieces_thr = st.sidebar.number_input("Pieces Threshold", value=6)
     
-    # File upload
     uploaded_file = st.file_uploader("Upload Manifest File", type=["xlsx", "xls", "csv"])
     
     if uploaded_file:
         st.info("Processing manifest...")
         
-        # Load route databases
         street_city_routes = load_street_city_routes('input/route_street_city.xlsx')
         zip_routes = load_zip_routes_xls('input/zip_routes.xls')
         fallback_routes = load_fallback_routes('input/routes_database.xlsx')
         
-        # Process data
         manifest = process_manifest(uploaded_file)
         matched_manifest = match_address_to_route(manifest, street_city_routes, zip_routes, fallback_routes)
         
-        # Generate reports
         output_path = "output"
         os.makedirs(output_path, exist_ok=True)
         timestamp = generate_reports(matched_manifest, output_path, weight_thr, vol_weight_thr, pieces_thr)
         
-        # Show success
         st.success("Processing complete! 🎉")
         
-        # Download buttons
-        st.subheader("Download Reports")
+        st.subheader("Standard Reports")
         col1, col2, col3 = st.columns(3)
         with col1:
             with open(f"{output_path}/route_summary_{timestamp}.xlsx", "rb") as f:
@@ -426,8 +484,19 @@ def main():
         with col3:
             with open(f"{output_path}/matching_details_{timestamp}.xlsx", "rb") as f:
                 st.download_button("Matching Details", f, f"matching_details_{timestamp}.xlsx")
-        
-        # Preview
+
+        st.subheader("Additional Reports")
+        col4, col5 = st.columns(2)
+        with col4:
+            with open(f"{output_path}/WTH_MPCS_Report_{timestamp}.xlsx", "rb") as f:
+                st.download_button("WTH MPCS Report", f, f"WTH_MPCS_Report_{timestamp}.xlsx")
+        with col5:
+            if 'PCC' in manifest.columns:
+                with open(f"{output_path}/Priority_Shipments_{timestamp}.xlsx", "rb") as f:
+                    st.download_button("Priority Shipments", f, f"Priority_Shipments_{timestamp}.xlsx")
+            else:
+                st.write("Priority report unavailable (missing PCC data)")
+
         st.subheader("Preview of Processed Data")
         st.dataframe(matched_manifest.head(10))
 
