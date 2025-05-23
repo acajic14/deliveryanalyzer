@@ -324,7 +324,7 @@ def generate_reports(manifest_df, output_path, weight_thr=70, vol_weight_thr=150
         'CONSIGNEE_ADDRESS': 'first',
         'WEIGHT': 'sum',
         'VOLUMETRIC_WEIGHT': 'sum',
-        'PIECES': 'first'  # Use first, not sum!
+        'PIECES': 'first'
     }).reset_index()
 
     route_summary = hwb_aggregated.groupby('MATCHED_ROUTE').agg(
@@ -376,7 +376,7 @@ def generate_reports(manifest_df, output_path, weight_thr=70, vol_weight_thr=150
         'MATCHED_ROUTE': 'first',
         'WEIGHT': 'max',
         'VOLUMETRIC_WEIGHT': 'max',
-        'PIECES': 'first',  # Use first, not sum!
+        'PIECES': 'first'
     }).reset_index()
     special_cases['TRIGGER_REASON'] = special_cases.apply(get_trigger_reason, axis=1)
     special_cases['WEIGHT_PER_PIECE'] = special_cases.apply(
@@ -402,11 +402,50 @@ def generate_reports(manifest_df, output_path, weight_thr=70, vol_weight_thr=150
     }, inplace=True)
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M")
-    with pd.ExcelWriter(f"{output_path}/route_summary_{timestamp}.xlsx") as writer:
+    with pd.ExcelWriter(f"{output_path}/route_summary_{timestamp}.xlsx", engine='openpyxl') as writer:
         route_summary.to_excel(writer, sheet_name='Summary', index=False)
         consignee_summary_fuzzy.rename(columns={'CANONICAL_NAME': 'CONSIGNEE_NAME'}, inplace=True)
         consignee_summary_fuzzy.to_excel(writer, sheet_name='Consignee_Summary', index=False)
         route_details.to_excel(writer, sheet_name='Route_Details', index=False)
+
+        # ==============================================
+        # Add PCC Statistics to Route Summary
+        # ==============================================
+        workbook = writer.book
+        sheet = workbook['Summary']
+
+        # Add spacing after routes
+        sheet.append([])
+        sheet.append(["PCC Statistics:"])
+        sheet.append(["Product", "Shipments", "Pieces", "Ratio"])
+
+        # PCC Categories to analyze
+        pcc_categories = [
+            ('WPX', 'WPX'),
+            ('TDY', 'TDY'),
+            ('ESI', 'ESI'),
+            ('ALL', 'All volume')  # Changed label here!
+        ]
+
+        for pcc_code, label in pcc_categories:
+            if 'PCC' in manifest_df.columns:
+                if pcc_code == 'ALL':
+                    filtered_df = manifest_df[manifest_df['PCC'].notna()]
+                else:
+                    filtered_df = manifest_df[manifest_df['PCC'] == pcc_code]
+                shipments = filtered_df['HWB'].nunique()
+                pieces = filtered_df['PIECES'].sum()
+                ratio = round(pieces / shipments, 2) if shipments > 0 else 0
+            else:
+                shipments = 0
+                pieces = 0
+                ratio = 0
+            sheet.append([
+                label,
+                shipments,
+                pieces,
+                ratio
+            ])
 
     special_cases.to_excel(f"{output_path}/special_cases_{timestamp}.xlsx", index=False)
     matching_details.to_excel(f"{output_path}/matching_details_{timestamp}.xlsx", index=False)
@@ -427,14 +466,13 @@ def generate_reports(manifest_df, output_path, weight_thr=70, vol_weight_thr=150
         
         group1 = priority_pccs[priority_pccs['PCC'].isin(['CMX', 'WMX'])].sort_values(
             by=['CONSIGNEE_ZIP', 'MATCHED_ROUTE'], 
-            ascending=[True, True]  # ZIP ascending, route A-Z
+            ascending=[True, True]
         )
         group2 = priority_pccs[priority_pccs['PCC'].isin(['TDT', 'TDY'])].sort_values(
             by=['CONSIGNEE_ZIP', 'MATCHED_ROUTE'],
             ascending=[True, True]
         )
 
-        # Create formatted Excel file
         wb = Workbook()
         ws = wb.active
         ws.title = "Priority Shipments"
