@@ -146,10 +146,11 @@ def load_fallback_routes(path):
 # ==============================================
 def parse_pieces(value):
     try:
-        value_str = str(value).replace('\\', '/')
-        parts = value_str.split('/')
-        first_part = parts[0].strip()
-        numbers = re.findall(r'\d+', first_part)
+        value_str = str(value)
+        # Split on backslash (escaped as '\\') or forward slash just in case
+        parts = re.split(r'[\\/]', value_str)
+        # Take the first part (arrived), extract digits
+        numbers = re.findall(r'\d+', parts[0])
         return int(numbers[0]) if numbers else 1
     except Exception:
         return 1
