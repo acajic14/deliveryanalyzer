@@ -145,12 +145,12 @@ def load_fallback_routes(path):
 # Manifest Processing
 # ==============================================
 def parse_pieces(value):
+    """Extracts the first number from the 'Pcs' part of '# Pcs\\Tot Pcs'"""
     try:
-        value_str = str(value)
-        # Split on backslash (escaped as '\\') or forward slash just in case
-        parts = re.split(r'[\\/]', value_str)
-        # Take the first part (arrived), extract digits
-        numbers = re.findall(r'\d+', parts[0])
+        value_str = str(value).replace('\\', '/')
+        parts = value_str.split('/')
+        first_part = parts[0].strip()
+        numbers = re.findall(r'\d+', first_part)
         return int(numbers[0]) if numbers else 1
     except Exception:
         return 1
@@ -195,6 +195,9 @@ def process_manifest(file):
             if new_col in ['HWB', 'CONSIGNEE_ZIP', 'WEIGHT', 'PIECES', 'PCC']:
                 new_df[new_col] = None
 
+    if 'PIECES' in new_df.columns:
+        new_df['PIECES'] = new_df['PIECES'].apply(parse_pieces)
+
     if 'PCC' in new_df.columns:
         new_df['PCC'] = new_df['PCC'].astype(str).str.strip().str.upper()
 
@@ -206,9 +209,6 @@ def process_manifest(file):
     new_df['HOUSE_NUMBER'] = new_df['CONSIGNEE_STREET'].apply(extract_house_number)
     new_df['HOUSE_NUMBER_FLOAT'] = new_df['HOUSE_NUMBER'].apply(house_number_to_float)
     new_df['STREET_NAME'] = new_df['CONSIGNEE_STREET'].apply(clean_street_name)
-
-    if 'PIECES' in new_df.columns:
-        new_df['PIECES'] = new_df['PIECES'].apply(parse_pieces)
 
     if 'CONSIGNEE_ZIP' in new_df.columns:
         new_df['CONSIGNEE_ZIP'] = (
@@ -324,7 +324,7 @@ def generate_reports(manifest_df, output_path, weight_thr=70, vol_weight_thr=150
         'CONSIGNEE_ADDRESS': 'first',
         'WEIGHT': 'sum',
         'VOLUMETRIC_WEIGHT': 'sum',
-        'PIECES': 'sum'
+        'PIECES': 'first'  # Use first, not sum!
     }).reset_index()
 
     route_summary = hwb_aggregated.groupby('MATCHED_ROUTE').agg(
@@ -376,7 +376,7 @@ def generate_reports(manifest_df, output_path, weight_thr=70, vol_weight_thr=150
         'MATCHED_ROUTE': 'first',
         'WEIGHT': 'max',
         'VOLUMETRIC_WEIGHT': 'max',
-        'PIECES': 'sum',
+        'PIECES': 'first',  # Use first, not sum!
     }).reset_index()
     special_cases['TRIGGER_REASON'] = special_cases.apply(get_trigger_reason, axis=1)
     special_cases['WEIGHT_PER_PIECE'] = special_cases.apply(
@@ -425,7 +425,6 @@ def generate_reports(manifest_df, output_path, weight_thr=70, vol_weight_thr=150
             manifest_df['PCC'].isin(['CMX', 'WMX', 'TDT', 'TDY'])
         ].copy()
         
-        # Split and sort groups - ZIP ascending now!
         group1 = priority_pccs[priority_pccs['PCC'].isin(['CMX', 'WMX'])].sort_values(
             by=['CONSIGNEE_ZIP', 'MATCHED_ROUTE'], 
             ascending=[True, True]  # ZIP ascending, route A-Z
@@ -440,43 +439,31 @@ def generate_reports(manifest_df, output_path, weight_thr=70, vol_weight_thr=150
         ws = wb.active
         ws.title = "Priority Shipments"
         
-        # Column order with MATCHED_ROUTE first
         cols = ['MATCHED_ROUTE', 'HWB', 'CONSIGNEE_NAME', 'CONSIGNEE_ZIP', 'PCC', 'WEIGHT', 'VOLUMETRIC_WEIGHT', 'PIECES']
-        
-        # Header styling
         header_font = Font(bold=True)
 
-        # CMX/WMX Section
         ws['A1'] = "CMX/WMX Priority Shipments"
         ws['A1'].font = header_font
         
-        # Write headers starting at row 3
-        ws.append([])  # Empty row
+        ws.append([])
         for col_idx, col in enumerate(cols, 1):
             ws.cell(row=3, column=col_idx, value=col).font = header_font
         
-        # Write group1 data starting at row 4
         for row_idx, row in enumerate(dataframe_to_rows(group1[cols], index=False, header=False), 4):
             for col_idx, value in enumerate(row, 1):
                 ws.cell(row=row_idx, column=col_idx, value=value)
 
-        # Add spacing (3 rows)
         last_row = ws.max_row + 3
         
-        # TDT/TDY Section
         ws.cell(row=last_row, column=1, value="TDT/TDY Priority Shipments").font = header_font
-        ws.append([])  # Empty row
-        
-        # Write headers again
+        ws.append([])
         for col_idx, col in enumerate(cols, 1):
             ws.cell(row=last_row + 2, column=col_idx, value=col).font = header_font
         
-        # Write group2 data
         for row_idx, row in enumerate(dataframe_to_rows(group2[cols], index=False, header=False), last_row + 3):
             for col_idx, value in enumerate(row, 1):
                 ws.cell(row=row_idx, column=col_idx, value=value)
 
-        # Save file
         priority_file = f"{output_path}/Priority_Shipments_{timestamp}.xlsx"
         wb.save(priority_file)
 
