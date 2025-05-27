@@ -17,7 +17,6 @@ from openpyxl.styles import Font
 from openpyxl.utils.dataframe import dataframe_to_rows
 from openpyxl.formatting.rule import CellIsRule
 
-# --- Helper functions ---
 def normalize_diacritics(text):
     diacritic_map = {'č':'c', 'š':'s', 'ž':'z', 'Č':'c', 'Š':'s', 'Ž':'z'}
     return ''.join(diacritic_map.get(c, c) for c in text)
@@ -358,26 +357,72 @@ def generate_reports(manifest_df, output_path, weight_thr=70, vol_weight_thr=150
     route_summary = route_summary.reindex(columns=new_column_order)
     route_summary = route_summary.rename(columns={'ROUTE': 'MATCHED_ROUTE'})
 
-    # ... [rest of your report generation code as before, including writing to Excel, formatting, etc.] ...
+    # Special cases
+    def get_trigger_reason(row):
+        reasons = []
+        if row['WEIGHT'] > weight_thr: reasons.append(f'Weight >{weight_thr}kg')
+        if row['VOLUMETRIC_WEIGHT'] > vol_weight_thr: reasons.append(f'Volumetric >{vol_weight_thr}kg')
+        if row['PIECES'] > pieces_thr: reasons.append(f'Pieces >{pieces_thr}')
+        return ', '.join(reasons) if reasons else None
+
+    special_cases = manifest_df[
+        (manifest_df['WEIGHT'] > weight_thr) |
+        (manifest_df['VOLUMETRIC_WEIGHT'] > vol_weight_thr) |
+        (manifest_df['PIECES'] > pieces_thr)
+    ].copy()
+    special_cases = special_cases.groupby('HWB').agg({
+        'CONSIGNEE_NAME': 'first',
+        'CONSIGNEE_ZIP': 'first',
+        'MATCHED_ROUTE': 'first',
+        'WEIGHT': 'max',
+        'VOLUMETRIC_WEIGHT': 'max',
+        'PIECES': 'first'
+    }).reset_index()
+    special_cases['TRIGGER_REASON'] = special_cases.apply(get_trigger_reason, axis=1)
+    special_cases['WEIGHT_PER_PIECE'] = special_cases.apply(
+        lambda x: round(x['WEIGHT']/x['PIECES'], 2) if x['PIECES'] > pieces_thr else None,
+        axis=1
+    )
+    special_cases = special_cases[[
+        'HWB', 'CONSIGNEE_NAME', 'CONSIGNEE_ZIP', 'MATCHED_ROUTE',
+        'WEIGHT', 'VOLUMETRIC_WEIGHT', 'PIECES', 'TRIGGER_REASON', 'WEIGHT_PER_PIECE'
+    ]].sort_values(
+        by=['CONSIGNEE_ZIP', 'MATCHED_ROUTE', 'CONSIGNEE_NAME'],
+        ascending=[True, True, True]
+    )
+
+    matching_details = manifest_df[[
+        'HWB', 'CONSIGNEE_NAME', 'CONSIGNEE_ZIP', 'CONSIGNEE_ADDRESS',
+        'MATCHED_ROUTE', 'MATCH_METHOD'
+    ]].copy()
+    matching_details['MATCHED_ROUTE'] = matching_details['MATCHED_ROUTE'].fillna('UNMATCHED')
+    matching_details['MATCH_METHOD'] = matching_details['MATCH_METHOD'].fillna('UNMATCHED')
+    matching_details.rename(columns={'MATCH_METHOD': 'MATCHING_METHOD'}, inplace=True)
+
     timestamp = datetime.now().strftime("%Y%m%d_%H%M")
     os.makedirs(output_path, exist_ok=True)
     summary_path = f"{output_path}/route_summary_{timestamp}.xlsx"
+    special_cases_path = f"{output_path}/special_cases_{timestamp}.xlsx"
+    matching_details_path = f"{output_path}/matching_details_{timestamp}.xlsx"
+    wth_mpcs_path = f"{output_path}/WTH_MPCS_Report_{timestamp}.xlsx"
+
     with pd.ExcelWriter(summary_path, engine='openpyxl') as writer:
         route_summary.to_excel(writer, sheet_name='Summary', index=False)
         workbook = writer.book
         sheet = workbook['Summary']
-        # Format total_weight column (column D) to 1 decimal
         for row in sheet.iter_rows(min_row=2, max_row=len(route_summary)+1, min_col=4, max_col=4):
             for cell in row:
                 cell.number_format = '0.0'
-        # Conditional formatting for Predicted - Target (column J)
         pred_target_col = 'J'
         start_row = 2
         end_row = len(route_summary) + 1
         add_target_conditional_formatting(sheet, pred_target_col, start_row, end_row)
-        # ... [rest of Excel writing code as before] ...
 
-    # ... [rest of code for special_cases, matching_details, etc. unchanged] ...
+    special_cases.to_excel(special_cases_path, index=False)
+    matching_details.to_excel(matching_details_path, index=False)
+    wth_mpcs_report = special_cases.sort_values('PIECES', ascending=False)
+    wth_mpcs_report.to_excel(wth_mpcs_path, index=False)
+
     return timestamp, route_summary
 
 def main():
@@ -403,7 +448,6 @@ def main():
         os.makedirs(output_path, exist_ok=True)
         timestamp, route_summary = generate_reports(matched_manifest, output_path, weight_thr, vol_weight_thr, pieces_thr)
         
-        # Display Predicted SPR
         try:
             if not route_summary.empty and 'Predicted Stops' in route_summary:
                 predicted_spr = route_summary['Predicted Stops'].mean()
