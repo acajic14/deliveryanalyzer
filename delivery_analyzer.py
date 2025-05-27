@@ -1,6 +1,3 @@
-# ==============================================
-# PyInstaller Workaround & Warnings Suppression
-# ==============================================
 import sys
 import os
 
@@ -10,9 +7,6 @@ if getattr(sys, 'frozen', False):
     os.environ['STREAMLIT_SERVER_ENABLE_STATIC_SERVE'] = 'true'
     os.environ['STREAMLIT_SERVER_ENABLE_XSRF_PROTECTION'] = 'false'
 
-# ==============================================
-# Main Imports
-# ==============================================
 import streamlit as st
 import pandas as pd
 from datetime import datetime
@@ -22,9 +16,6 @@ from openpyxl import Workbook
 from openpyxl.styles import Font
 from openpyxl.utils.dataframe import dataframe_to_rows
 
-# ==============================================
-# Helper Functions 
-# ==============================================
 def normalize_diacritics(text):
     diacritic_map = {'č':'c', 'š':'s', 'ž':'z', 'Č':'c', 'Š':'s', 'Ž':'z'}
     return ''.join(diacritic_map.get(c, c) for c in text)
@@ -39,7 +30,6 @@ def clean_street_name(address):
         'ulica', 'cesta', 'ul', 'street', 'road', 'd.o.o.', 'd.d.', 'eu', 'skl', 'vh', 'naselje', 'mesto'
     }
     address = normalize_diacritics(str(address))
-    # Remove all punctuation (including dots) and replace with space
     address = re.sub(r'[^\w\s]', ' ', address)
     address = re.sub(r'\s+', ' ', address).lower()
     address = re.sub(r'([a-z])(\d)', r'\1 \2', address)
@@ -91,9 +81,6 @@ def house_number_to_float(hn):
         base += (ord(letter_part) - ord('a') + 1) * 0.01
     return base
 
-# ==============================================
-# Route Database Loading
-# ==============================================
 def load_street_city_routes(path):
     try:
         df = pd.read_excel(path)
@@ -127,11 +114,7 @@ def load_targets(path):
         st.warning(f"Couldn't load targets.xlsx: {str(e)}")
         return pd.DataFrame()
 
-# ==============================================
-# Manifest Processing
-# ==============================================
 def parse_pieces(value):
-    """Extracts the first number from the 'Pcs' part of '# Pcs\\Tot Pcs'"""
     try:
         value_str = str(value).replace('\\', '/')
         parts = value_str.split('/')
@@ -215,9 +198,6 @@ def process_manifest(file):
     new_df['CONSIGNEE_NAME_NORM'] = new_df['CONSIGNEE_NAME'].apply(normalize_consignee_name)
     return new_df
 
-# ==============================================
-# Route Matching Logic (ZIP/Street-City Priority)
-# ==============================================
 def match_address_to_route(manifest_df, street_city_routes, fallback_routes):
     manifest_df['MATCHED_ROUTE'] = None
     manifest_df['MATCH_METHOD'] = None
@@ -232,7 +212,6 @@ def match_address_to_route(manifest_df, street_city_routes, fallback_routes):
         matched = False
 
         if zip_code in special_zips:
-            # Priority: Street-City -> ZIP Fallback
             if not street_city_routes.empty:
                 city_matches = street_city_routes[street_city_routes['CITY_CLEAN'] == city_name]
                 if not city_matches.empty:
@@ -262,7 +241,6 @@ def match_address_to_route(manifest_df, street_city_routes, fallback_routes):
                 continue
 
         else:
-            # Default Priority: ZIP Fallback -> Street-City
             if zip_code in fallback_routes['ZIP'].values:
                 manifest_df.at[idx, 'MATCHED_ROUTE'] = fallback_routes.loc[
                     fallback_routes['ZIP'] == zip_code, 'ROUTE'
@@ -293,9 +271,6 @@ def match_address_to_route(manifest_df, street_city_routes, fallback_routes):
 
     return manifest_df
 
-# ==============================================
-# Report Generation
-# ==============================================
 def fuzzy_group_names(df, group_col='CONSIGNEE_NAME_NORM', threshold=90):
     grouped_data = []
     processed = set()
@@ -365,24 +340,172 @@ def generate_reports(manifest_df, output_path, weight_thr=70, vol_weight_thr=150
     ]
     route_summary = route_summary.reindex(columns=new_column_order)
 
-    # ... [rest of generate_reports unchanged: consignee_summary, special_cases, matching_details, PCC stats, WTH MPCS, Priority Shipments, etc.] ...
-    # (Paste your latest working code for those sections here, unchanged.)
+    consignee_summary = hwb_aggregated.groupby(
+        ['MATCHED_ROUTE', 'CONSIGNEE_NAME_NORM']
+    ).agg(
+        consignee_display=('CONSIGNEE_NAME', 'first'),
+        shipment_count=('HWB', 'count'),
+        total_pieces=('PIECES', 'sum'),
+        total_weight=('WEIGHT', 'sum')
+    ).reset_index().rename(columns={'consignee_display': 'CONSIGNEE_NAME'})
 
-    # For brevity, if you need the rest of the report generation code pasted again, let me know!
+    consignee_summary_fuzzy = consignee_summary.groupby('MATCHED_ROUTE', group_keys=False).apply(
+        lambda x: fuzzy_group_names(x, group_col='CONSIGNEE_NAME_NORM', threshold=90)
+    ).reset_index(drop=True)
 
-    # Example: Write route_summary to Excel as before
+    route_details = hwb_aggregated[[
+        'MATCHED_ROUTE', 'HWB', 'CONSIGNEE_NAME',
+        'CONSIGNEE_ZIP', 'CONSIGNEE_ADDRESS',
+        'WEIGHT', 'PIECES'
+    ]].sort_values(
+        by=['MATCHED_ROUTE', 'CONSIGNEE_ZIP', 'CONSIGNEE_NAME'],
+        ascending=[True, True, True]
+    )
+
+    def get_trigger_reason(row):
+        reasons = []
+        if row['WEIGHT'] > weight_thr: reasons.append(f'Weight >{weight_thr}kg')
+        if row['VOLUMETRIC_WEIGHT'] > vol_weight_thr: reasons.append(f'Volumetric >{vol_weight_thr}kg')
+        if row['PIECES'] > pieces_thr: reasons.append(f'Pieces >{pieces_thr}')
+        return ', '.join(reasons) if reasons else None
+
+    special_cases = manifest_df[
+        (manifest_df['WEIGHT'] > weight_thr) |
+        (manifest_df['VOLUMETRIC_WEIGHT'] > vol_weight_thr) |
+        (manifest_df['PIECES'] > pieces_thr)
+    ].copy()
+    special_cases = special_cases.groupby('HWB').agg({
+        'CONSIGNEE_NAME': 'first',
+        'CONSIGNEE_ZIP': 'first',
+        'MATCHED_ROUTE': 'first',
+        'WEIGHT': 'max',
+        'VOLUMETRIC_WEIGHT': 'max',
+        'PIECES': 'first'
+    }).reset_index()
+    special_cases['TRIGGER_REASON'] = special_cases.apply(get_trigger_reason, axis=1)
+    special_cases['WEIGHT_PER_PIECE'] = special_cases.apply(
+        lambda x: round(x['WEIGHT']/x['PIECES'], 2) if x['PIECES'] > pieces_thr else None,
+        axis=1
+    )
+    special_cases = special_cases[[
+        'HWB', 'CONSIGNEE_NAME', 'CONSIGNEE_ZIP', 'MATCHED_ROUTE',
+        'WEIGHT', 'VOLUMETRIC_WEIGHT', 'PIECES', 'TRIGGER_REASON', 'WEIGHT_PER_PIECE'
+    ]].sort_values(
+        by=['CONSIGNEE_ZIP', 'MATCHED_ROUTE', 'CONSIGNEE_NAME'],
+        ascending=[True, True, True]
+    )
+
+    matching_details = manifest_df[[
+        'HWB', 'CONSIGNEE_NAME', 'CONSIGNEE_ZIP', 'CONSIGNEE_ADDRESS',
+        'MATCHED_ROUTE', 'MATCH_METHOD'
+    ]].copy()
+    matching_details['MATCHED_ROUTE'] = matching_details['MATCHED_ROUTE'].fillna('UNMATCHED')
+    matching_details['MATCH_METHOD'] = matching_details['MATCH_METHOD'].fillna('UNMATCHED')
+    matching_details.rename(columns={
+        'MATCH_METHOD': 'MATCHING_METHOD'
+    }, inplace=True)
+
     timestamp = datetime.now().strftime("%Y%m%d_%H%M")
+    os.makedirs(output_path, exist_ok=True)
     with pd.ExcelWriter(f"{output_path}/route_summary_{timestamp}.xlsx", engine='openpyxl') as writer:
         route_summary.to_excel(writer, sheet_name='Summary', index=False)
-        # ... [rest of Excel writing code as before] ...
+        consignee_summary_fuzzy.rename(columns={'CANONICAL_NAME': 'CONSIGNEE_NAME'}, inplace=True)
+        consignee_summary_fuzzy.to_excel(writer, sheet_name='Consignee_Summary', index=False)
+        route_details.to_excel(writer, sheet_name='Route_Details', index=False)
 
-    # ... [rest of the code for special_cases, matching_details, WTH MPCS, Priority Shipments, etc.] ...
+        # Add PCC Statistics
+        workbook = writer.book
+        sheet = workbook['Summary']
+        
+        sheet.append([])
+        sheet.append(["PCC Statistics:"])
+        sheet.append(["Product", "Shipments", "Pieces", "Ratio"])
+
+        pcc_categories = [
+            ('WPX', 'WPX'),
+            ('TDY', 'TDY'),
+            ('ESI', 'ESI'),
+            ('ALL', 'All volume')
+        ]
+
+        for pcc_code, label in pcc_categories:
+            if 'PCC' in manifest_df.columns:
+                if pcc_code == 'ALL':
+                    filtered_df = manifest_df[manifest_df['PCC'].notna()]
+                else:
+                    filtered_df = manifest_df[manifest_df['PCC'] == pcc_code]
+                shipments = filtered_df['HWB'].nunique()
+                pieces = filtered_df['PIECES'].sum()
+                ratio = round(pieces / shipments, 2) if shipments > 0 else 0
+            else:
+                shipments = 0
+                pieces = 0
+                ratio = 0
+            sheet.append([
+                label,
+                shipments,
+                pieces,
+                ratio
+            ])
+
+    # Save all output files for download
+    special_cases_path = f"{output_path}/special_cases_{timestamp}.xlsx"
+    special_cases.to_excel(special_cases_path, index=False)
+    matching_details_path = f"{output_path}/matching_details_{timestamp}.xlsx"
+    matching_details.to_excel(matching_details_path, index=False)
+    wth_mpcs_path = f"{output_path}/WTH_MPCS_Report_{timestamp}.xlsx"
+    wth_mpcs_report = special_cases.sort_values('PIECES', ascending=False)
+    wth_mpcs_report.to_excel(wth_mpcs_path, index=False)
+
+    # Priority Shipments Report
+    if 'PCC' in manifest_df.columns:
+        priority_pccs = manifest_df[
+            manifest_df['PCC'].isin(['CMX', 'WMX', 'TDT', 'TDY'])
+        ].copy()
+        
+        group1 = priority_pccs[priority_pccs['PCC'].isin(['CMX', 'WMX'])].sort_values(
+            by=['CONSIGNEE_ZIP', 'MATCHED_ROUTE'], 
+            ascending=[True, True]
+        )
+        group2 = priority_pccs[priority_pccs['PCC'].isin(['TDT', 'TDY'])].sort_values(
+            by=['CONSIGNEE_ZIP', 'MATCHED_ROUTE'],
+            ascending=[True, True]
+        )
+
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Priority Shipments"
+        
+        cols = ['MATCHED_ROUTE', 'HWB', 'CONSIGNEE_NAME', 'CONSIGNEE_ZIP', 'PCC', 'WEIGHT', 'VOLUMETRIC_WEIGHT', 'PIECES']
+        header_font = Font(bold=True)
+
+        ws['A1'] = "CMX/WMX Priority Shipments"
+        ws['A1'].font = header_font
+        
+        ws.append([])
+        for col_idx, col in enumerate(cols, 1):
+            ws.cell(row=3, column=col_idx, value=col).font = header_font
+        
+        for row_idx, row in enumerate(dataframe_to_rows(group1[cols], index=False, header=False), 4):
+            for col_idx, value in enumerate(row, 1):
+                ws.cell(row=row_idx, column=col_idx, value=value)
+
+        last_row = ws.max_row + 3
+        
+        ws.cell(row=last_row, column=1, value="TDT/TDY Priority Shipments").font = header_font
+        ws.append([])
+        for col_idx, col in enumerate(cols, 1):
+            ws.cell(row=last_row + 2, column=col_idx, value=col).font = header_font
+        
+        for row_idx, row in enumerate(dataframe_to_rows(group2[cols], index=False, header=False), last_row + 3):
+            for col_idx, value in enumerate(row, 1):
+                ws.cell(row=row_idx, column=col_idx, value=value)
+
+        priority_file = f"{output_path}/Priority_Shipments_{timestamp}.xlsx"
+        wb.save(priority_file)
 
     return timestamp
 
-# ==============================================
-# Streamlit UI
-# ==============================================
 def main():
     st.title("🚚 Delivery Route Analyzer")
     st.sidebar.header("Settings")
@@ -426,10 +549,10 @@ def main():
             with open(f"{output_path}/WTH_MPCS_Report_{timestamp}.xlsx", "rb") as f:
                 st.download_button("WTH MPCS Report", f, f"WTH_MPCS_Report_{timestamp}.xlsx")
         with col5:
-            if 'PCC' in manifest.columns:
+            try:
                 with open(f"{output_path}/Priority_Shipments_{timestamp}.xlsx", "rb") as f:
                     st.download_button("Priority Shipments", f, f"Priority_Shipments_{timestamp}.xlsx")
-            else:
+            except FileNotFoundError:
                 st.write("Priority report unavailable (missing PCC data)")
 
         st.subheader("Preview of Processed Data")
