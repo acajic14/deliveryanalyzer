@@ -251,7 +251,7 @@ def match_address_to_route(manifest_df, street_city_routes, fallback_routes):
                 continue
 
             if not street_city_routes.empty:
-                city_matches = street_city_routes[street_city_routes['CITY_CLEAN'] == city_name]
+                city_matches = street_city_routes[street_city_routes['C CITY_CLEAN'] == city_name]
                 if not city_matches.empty:
                     matches = process.extract(
                         street_name,
@@ -357,7 +357,6 @@ def generate_reports(manifest_df, output_path, weight_thr=70, vol_weight_thr=150
     route_summary = route_summary.reindex(columns=new_column_order)
     route_summary = route_summary.rename(columns={'ROUTE': 'MATCHED_ROUTE'})
 
-    # Special cases
     def get_trigger_reason(row):
         reasons = []
         if row['WEIGHT'] > weight_thr: reasons.append(f'Weight >{weight_thr}kg')
@@ -422,6 +421,55 @@ def generate_reports(manifest_df, output_path, weight_thr=70, vol_weight_thr=150
     matching_details.to_excel(matching_details_path, index=False)
     wth_mpcs_report = special_cases.sort_values('PIECES', ascending=False)
     wth_mpcs_report.to_excel(wth_mpcs_path, index=False)
+
+    # Priority Shipments Report
+    if 'PCC' in manifest_df.columns:
+        priority_codes = ['CMX', 'WMX', 'TDT', 'TDY']
+        priority_pccs = manifest_df[
+            manifest_df['PCC'].isin(priority_codes)
+        ].copy()
+
+        if not priority_pccs.empty:
+            group1 = priority_pccs[priority_pccs['PCC'].isin(['CMX', 'WMX'])].sort_values(
+                by=['CONSIGNEE_ZIP', 'MATCHED_ROUTE'], 
+                ascending=[True, True]
+            )
+            group2 = priority_pccs[priority_pccs['PCC'].isin(['TDT', 'TDY'])].sort_values(
+                by=['CONSIGNEE_ZIP', 'MATCHED_ROUTE'],
+                ascending=[True, True]
+            )
+
+            wb = Workbook()
+            ws = wb.active
+            ws.title = "Priority Shipments"
+
+            cols = ['MATCHED_ROUTE', 'HWB', 'CONSIGNEE_NAME', 'CONSIGNEE_ZIP', 'PCC', 'WEIGHT', 'VOLUMETRIC_WEIGHT', 'PIECES']
+            header_font = Font(bold=True)
+
+            ws['A1'] = "CMX/WMX Priority Shipments"
+            ws['A1'].font = header_font
+
+            ws.append([])
+            for col_idx, col in enumerate(cols, 1):
+                ws.cell(row=3, column=col_idx, value=col).font = header_font
+
+            for row_idx, row in enumerate(dataframe_to_rows(group1[cols], index=False, header=False), 4):
+                for col_idx, value in enumerate(row, 1):
+                    ws.cell(row=row_idx, column=col_idx, value=value)
+
+            last_row = ws.max_row + 3
+
+            ws.cell(row=last_row, column=1, value="TDT/TDY Priority Shipments").font = header_font
+            ws.append([])
+            for col_idx, col in enumerate(cols, 1):
+                ws.cell(row=last_row + 2, column=col_idx, value=col).font = header_font
+
+            for row_idx, row in enumerate(dataframe_to_rows(group2[cols], index=False, header=False), last_row + 3):
+                for col_idx, value in enumerate(row, 1):
+                    ws.cell(row=row_idx, column=col_idx, value=value)
+
+            priority_file = f"{output_path}/Priority_Shipments_{timestamp}.xlsx"
+            wb.save(priority_file)
 
     return timestamp, route_summary
 
