@@ -13,7 +13,7 @@ from datetime import datetime
 import re
 from rapidfuzz import fuzz, process
 from openpyxl import Workbook
-from openpyxl.styles import Font, PatternFill
+from openpyxl.styles import Font
 from openpyxl.utils.dataframe import dataframe_to_rows
 from openpyxl.formatting.rule import CellIsRule
 
@@ -298,20 +298,18 @@ def fuzzy_group_names(df, group_col='CONSIGNEE_NAME_NORM', threshold=90):
     return pd.DataFrame(grouped_data)
 
 def add_target_conditional_formatting(sheet, col_letter, start_row, end_row):
-    red_fill = PatternFill(start_color='FFFF0000', end_color='FFFF0000', fill_type='solid')
-    yellow_fill = PatternFill(start_color='FFFFFF00', end_color='FFFFFF00', fill_type='solid')
-    green_fill = PatternFill(start_color='FF00FF00', end_color='FF00FF00', fill_type='solid')
-    # Red for values > +5 or < -5
+    # Font color only, not background
+    red_font = Font(color='FF0000')
+    yellow_font = Font(color='FFA500')
+    green_font = Font(color='008000')
     sheet.conditional_formatting.add(f'{col_letter}{start_row}:{col_letter}{end_row}',
-        CellIsRule(operator='greaterThan', formula=['5'], fill=red_fill))
+        CellIsRule(operator='greaterThan', formula=['5'], font=red_font))
     sheet.conditional_formatting.add(f'{col_letter}{start_row}:{col_letter}{end_row}',
-        CellIsRule(operator='lessThan', formula=['-5'], fill=red_fill))
-    # Yellow for values between -5 and 0
+        CellIsRule(operator='lessThan', formula=['-5'], font=red_font))
     sheet.conditional_formatting.add(f'{col_letter}{start_row}:{col_letter}{end_row}',
-        CellIsRule(operator='between', formula=['-5', '0'], fill=yellow_fill))
-    # Green for values between 0 and +5
+        CellIsRule(operator='between', formula=['-5', '0'], font=yellow_font))
     sheet.conditional_formatting.add(f'{col_letter}{start_row}:{col_letter}{end_row}',
-        CellIsRule(operator='between', formula=['0', '5'], fill=green_fill))
+        CellIsRule(operator='between', formula=['0', '5'], font=green_font))
 
 def generate_reports(manifest_df, output_path, weight_thr=70, vol_weight_thr=150, pieces_thr=6):
     hwb_aggregated = manifest_df.groupby(['HWB', 'MATCHED_ROUTE']).agg({
@@ -345,6 +343,8 @@ def generate_reports(manifest_df, output_path, weight_thr=70, vol_weight_thr=150
         route_summary['Average PU stops'] = 0
         route_summary['Target stops'] = 0
 
+    # Round total_weight to 1 decimal
+    route_summary['total_weight'] = route_summary['total_weight'].round(1)
     route_summary['Predicted Stops'] = route_summary['unique_consignees'] + route_summary['Average PU stops']
     route_summary['Predicted - Target'] = route_summary['Predicted Stops'] - route_summary['Target stops']
 
@@ -536,7 +536,7 @@ def generate_reports(manifest_df, output_path, weight_thr=70, vol_weight_thr=150
         priority_file = f"{output_path}/Priority_Shipments_{timestamp}.xlsx"
         wb.save(priority_file)
 
-    return timestamp
+    return timestamp, route_summary
 
 def main():
     st.title("🚚 Delivery Route Analyzer")
@@ -559,7 +559,14 @@ def main():
         
         output_path = "output"
         os.makedirs(output_path, exist_ok=True)
-        timestamp = generate_reports(matched_manifest, output_path, weight_thr, vol_weight_thr, pieces_thr)
+        timestamp, route_summary = generate_reports(matched_manifest, output_path, weight_thr, vol_weight_thr, pieces_thr)
+        
+        # Calculate and display Predicted SPR (average of Predicted Stops)
+        try:
+            predicted_spr = route_summary['Predicted Stops'].mean()
+            st.metric("Predicted SPR (Average Predicted Stops)", f"{predicted_spr:.1f}")
+        except Exception as e:
+            st.warning(f"Couldn't calculate Predicted SPR: {str(e)}")
         
         st.success("Processing complete! 🎉")
         
