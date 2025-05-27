@@ -23,7 +23,7 @@ from openpyxl.styles import Font
 from openpyxl.utils.dataframe import dataframe_to_rows
 
 # ==============================================
-# Helper Functions
+# Helper Functions 
 # ==============================================
 def normalize_diacritics(text):
     diacritic_map = {'č':'c', 'š':'s', 'ž':'z', 'Č':'c', 'Š':'s', 'Ž':'z'}
@@ -230,7 +230,7 @@ def process_manifest(file):
     return new_df
 
 # ==============================================
-# Route Matching Logic
+# Route Matching Logic (Updated Priority Order)
 # ==============================================
 def match_address_to_route(manifest_df, street_city_routes, zip_sheets, fallback_routes):
     manifest_df['MATCHED_ROUTE'] = None
@@ -244,7 +244,16 @@ def match_address_to_route(manifest_df, street_city_routes, zip_sheets, fallback
         house_num = row['HOUSE_NUMBER_FLOAT']
         matched = False
 
-        # 1. Street-City matching
+        # 1. ZIP Fallback (Highest Priority)
+        if zip_code in fallback_routes['ZIP'].values:
+            manifest_df.at[idx, 'MATCHED_ROUTE'] = fallback_routes.loc[
+                fallback_routes['ZIP'] == zip_code, 'ROUTE'
+            ].values[0]
+            manifest_df.at[idx, 'MATCH_METHOD'] = 'ZIP'
+            manifest_df.at[idx, 'MATCH_SCORE'] = 100.0
+            continue  # Skip other matching methods
+
+        # 2. Street-City Matching
         if not street_city_routes.empty:
             city_matches = street_city_routes[street_city_routes['CITY_CLEAN'] == city_name]
             if not city_matches.empty:
@@ -263,7 +272,7 @@ def match_address_to_route(manifest_df, street_city_routes, zip_sheets, fallback
                     matched = True
                     break
 
-        # 2. ZIP-specific sheets
+        # 3. ZIP-Specific Sheets (Lowest Priority)
         if not matched and zip_code in zip_sheets:
             sheet = zip_sheets[zip_code]
             matches = process.extract(street_name, sheet['STREET_CLEAN'], scorer=fuzz.token_set_ratio, score_cutoff=65, limit=5)
@@ -279,12 +288,6 @@ def match_address_to_route(manifest_df, street_city_routes, zip_sheets, fallback
                         break
                 if matched:
                     break
-
-        # 3. ZIP fallback
-        if not matched and zip_code in fallback_routes['ZIP'].values:
-            manifest_df.at[idx, 'MATCHED_ROUTE'] = fallback_routes.loc[fallback_routes['ZIP'] == zip_code, 'ROUTE'].values[0]
-            manifest_df.at[idx, 'MATCH_METHOD'] = 'ZIP'
-            manifest_df.at[idx, 'MATCH_SCORE'] = 100.0
 
     return manifest_df
 
@@ -408,23 +411,19 @@ def generate_reports(manifest_df, output_path, weight_thr=70, vol_weight_thr=150
         consignee_summary_fuzzy.to_excel(writer, sheet_name='Consignee_Summary', index=False)
         route_details.to_excel(writer, sheet_name='Route_Details', index=False)
 
-        # ==============================================
-        # Add PCC Statistics to Route Summary
-        # ==============================================
+        # Add PCC Statistics
         workbook = writer.book
         sheet = workbook['Summary']
-
-        # Add spacing after routes
+        
         sheet.append([])
         sheet.append(["PCC Statistics:"])
         sheet.append(["Product", "Shipments", "Pieces", "Ratio"])
 
-        # PCC Categories to analyze
         pcc_categories = [
             ('WPX', 'WPX'),
             ('TDY', 'TDY'),
             ('ESI', 'ESI'),
-            ('ALL', 'All volume')  # Changed label here!
+            ('ALL', 'All volume')
         ]
 
         for pcc_code, label in pcc_categories:
@@ -450,15 +449,11 @@ def generate_reports(manifest_df, output_path, weight_thr=70, vol_weight_thr=150
     special_cases.to_excel(f"{output_path}/special_cases_{timestamp}.xlsx", index=False)
     matching_details.to_excel(f"{output_path}/matching_details_{timestamp}.xlsx", index=False)
 
-    # ==============================================
-    # WTH MPCS Report (Special Cases sorted by Pieces descending)
-    # ==============================================
+    # WTH MPCS Report
     wth_mpcs_report = special_cases.sort_values('PIECES', ascending=False)
     wth_mpcs_report.to_excel(f"{output_path}/WTH_MPCS_Report_{timestamp}.xlsx", index=False)
 
-    # ==============================================
-    # Priority Shipments Report (Formatted with headers, ZIP ascending)
-    # ==============================================
+    # Priority Shipments Report
     if 'PCC' in manifest_df.columns:
         priority_pccs = manifest_df[
             manifest_df['PCC'].isin(['CMX', 'WMX', 'TDT', 'TDY'])
