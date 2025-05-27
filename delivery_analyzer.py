@@ -230,12 +230,14 @@ def process_manifest(file):
     return new_df
 
 # ==============================================
-# Route Matching Logic (Updated Priority Order)
+# Route Matching Logic (Priority Order Updated)
 # ==============================================
 def match_address_to_route(manifest_df, street_city_routes, zip_sheets, fallback_routes):
     manifest_df['MATCHED_ROUTE'] = None
     manifest_df['MATCH_METHOD'] = None
     manifest_df['MATCH_SCORE'] = 0.0
+    
+    special_zips = {'2000', '3000', '4000', '5000', '6000', '8000'}
 
     for idx, row in manifest_df.iterrows():
         zip_code = row['CONSIGNEE_ZIP']
@@ -244,50 +246,96 @@ def match_address_to_route(manifest_df, street_city_routes, zip_sheets, fallback
         house_num = row['HOUSE_NUMBER_FLOAT']
         matched = False
 
-        # 1. ZIP Fallback (Highest Priority)
-        if zip_code in fallback_routes['ZIP'].values:
-            manifest_df.at[idx, 'MATCHED_ROUTE'] = fallback_routes.loc[
-                fallback_routes['ZIP'] == zip_code, 'ROUTE'
-            ].values[0]
-            manifest_df.at[idx, 'MATCH_METHOD'] = 'ZIP'
-            manifest_df.at[idx, 'MATCH_SCORE'] = 100.0
-            continue  # Skip other matching methods
-
-        # 2. Street-City Matching
-        if not street_city_routes.empty:
-            city_matches = street_city_routes[street_city_routes['CITY_CLEAN'] == city_name]
-            if not city_matches.empty:
-                matches = process.extract(
-                    street_name,
-                    city_matches['STREET_CLEAN'],
-                    scorer=fuzz.token_set_ratio,
-                    score_cutoff=70,
-                    limit=3
-                )
-                for matched_street, score, _ in matches:
-                    best_match = city_matches[city_matches['STREET_CLEAN'] == matched_street].iloc[0]
-                    manifest_df.at[idx, 'MATCHED_ROUTE'] = best_match['ROUTE']
-                    manifest_df.at[idx, 'MATCH_METHOD'] = 'Street-City'
-                    manifest_df.at[idx, 'MATCH_SCORE'] = float(score)
-                    matched = True
-                    break
-
-        # 3. ZIP-Specific Sheets (Lowest Priority)
-        if not matched and zip_code in zip_sheets:
-            sheet = zip_sheets[zip_code]
-            matches = process.extract(street_name, sheet['STREET_CLEAN'], scorer=fuzz.token_set_ratio, score_cutoff=65, limit=5)
-            for matched_street, score, _ in matches:
-                street_rows = sheet[sheet['STREET_CLEAN'] == matched_street]
-                for _, r in street_rows.iterrows():
-                    if (pd.isna(r['LOW_FLOAT']) or pd.isna(r['HIGH_FLOAT'])) or \
-                       (r['LOW_FLOAT'] <= house_num <= r['HIGH_FLOAT']):
-                        manifest_df.at[idx, 'MATCHED_ROUTE'] = r['ROUTE']
-                        manifest_df.at[idx, 'MATCH_METHOD'] = 'Street+House'
+        if zip_code in special_zips:
+            # Priority: Street-City -> ZIP Fallback -> ZIP-specific
+            if not street_city_routes.empty:
+                city_matches = street_city_routes[street_city_routes['CITY_CLEAN'] == city_name]
+                if not city_matches.empty:
+                    matches = process.extract(
+                        street_name,
+                        city_matches['STREET_CLEAN'],
+                        scorer=fuzz.token_set_ratio,
+                        score_cutoff=70,
+                        limit=3
+                    )
+                    for matched_street, score, _ in matches:
+                        best_match = city_matches[city_matches['STREET_CLEAN'] == matched_street].iloc[0]
+                        manifest_df.at[idx, 'MATCHED_ROUTE'] = best_match['ROUTE']
+                        manifest_df.at[idx, 'MATCH_METHOD'] = 'Street-City'
                         manifest_df.at[idx, 'MATCH_SCORE'] = float(score)
                         matched = True
                         break
-                if matched:
-                    break
+                    if matched:
+                        continue
+
+            if zip_code in fallback_routes['ZIP'].values:
+                manifest_df.at[idx, 'MATCHED_ROUTE'] = fallback_routes.loc[
+                    fallback_routes['ZIP'] == zip_code, 'ROUTE'
+                ].values[0]
+                manifest_df.at[idx, 'MATCH_METHOD'] = 'ZIP'
+                manifest_df.at[idx, 'MATCH_SCORE'] = 100.0
+                continue
+
+            if zip_code in zip_sheets:
+                sheet = zip_sheets[zip_code]
+                matches = process.extract(street_name, sheet['STREET_CLEAN'], scorer=fuzz.token_set_ratio, score_cutoff=65, limit=5)
+                for matched_street, score, _ in matches:
+                    street_rows = sheet[sheet['STREET_CLEAN'] == matched_street]
+                    for _, r in street_rows.iterrows():
+                        if (pd.isna(r['LOW_FLOAT']) or pd.isna(r['HIGH_FLOAT'])) or \
+                           (r['LOW_FLOAT'] <= house_num <= r['HIGH_FLOAT']):
+                            manifest_df.at[idx, 'MATCHED_ROUTE'] = r['ROUTE']
+                            manifest_df.at[idx, 'MATCH_METHOD'] = 'Street+House'
+                            manifest_df.at[idx, 'MATCH_SCORE'] = float(score)
+                            matched = True
+                            break
+                    if matched:
+                        break
+        else:
+            # Default Priority: ZIP Fallback -> Street-City -> ZIP-specific
+            if zip_code in fallback_routes['ZIP'].values:
+                manifest_df.at[idx, 'MATCHED_ROUTE'] = fallback_routes.loc[
+                    fallback_routes['ZIP'] == zip_code, 'ROUTE'
+                ].values[0]
+                manifest_df.at[idx, 'MATCH_METHOD'] = 'ZIP'
+                manifest_df.at[idx, 'MATCH_SCORE'] = 100.0
+                continue
+
+            if not street_city_routes.empty:
+                city_matches = street_city_routes[street_city_routes['CITY_CLEAN'] == city_name]
+                if not city_matches.empty:
+                    matches = process.extract(
+                        street_name,
+                        city_matches['STREET_CLEAN'],
+                        scorer=fuzz.token_set_ratio,
+                        score_cutoff=70,
+                        limit=3
+                    )
+                    for matched_street, score, _ in matches:
+                        best_match = city_matches[city_matches['STREET_CLEAN'] == matched_street].iloc[0]
+                        manifest_df.at[idx, 'MATCHED_ROUTE'] = best_match['ROUTE']
+                        manifest_df.at[idx, 'MATCH_METHOD'] = 'Street-City'
+                        manifest_df.at[idx, 'MATCH_SCORE'] = float(score)
+                        matched = True
+                        break
+                    if matched:
+                        continue
+
+            if zip_code in zip_sheets:
+                sheet = zip_sheets[zip_code]
+                matches = process.extract(street_name, sheet['STREET_CLEAN'], scorer=fuzz.token_set_ratio, score_cutoff=65, limit=5)
+                for matched_street, score, _ in matches:
+                    street_rows = sheet[sheet['STREET_CLEAN'] == matched_street]
+                    for _, r in street_rows.iterrows():
+                        if (pd.isna(r['LOW_FLOAT']) or pd.isna(r['HIGH_FLOAT'])) or \
+                           (r['LOW_FLOAT'] <= house_num <= r['HIGH_FLOAT']):
+                            manifest_df.at[idx, 'MATCHED_ROUTE'] = r['ROUTE']
+                            manifest_df.at[idx, 'MATCH_METHOD'] = 'Street+House'
+                            manifest_df.at[idx, 'MATCH_SCORE'] = float(score)
+                            matched = True
+                            break
+                    if matched:
+                        break
 
     return manifest_df
 
