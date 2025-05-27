@@ -119,6 +119,14 @@ def load_fallback_routes(path):
         st.error(f"Fallback routes error: {str(e)}")
         return pd.DataFrame()
 
+def load_targets(path):
+    try:
+        df = pd.read_excel(path, usecols="A:C", header=0, names=['ROUTE', 'Average PU stops', 'Target stops'])
+        return df
+    except Exception as e:
+        st.warning(f"Couldn't load targets.xlsx: {str(e)}")
+        return pd.DataFrame()
+
 # ==============================================
 # Manifest Processing
 # ==============================================
@@ -332,6 +340,30 @@ def generate_reports(manifest_df, output_path, weight_thr=70, vol_weight_thr=150
     ).reset_index()
     route_summary['total_weight'] = route_summary['total_weight'].round().astype(int)
     route_summary['total_pieces'] = route_summary['total_pieces'].astype(int)
+
+    # === Merge in targets.xlsx data ===
+    targets_df = load_targets('input/targets.xlsx')
+    if not targets_df.empty:
+        route_summary = pd.merge(
+            route_summary,
+            targets_df,
+            on='ROUTE',
+            how='left'
+        )
+    else:
+        route_summary['Average PU stops'] = 0
+        route_summary['Target stops'] = 0
+
+    route_summary['Predicted Stops'] = route_summary['unique_consignees'] + route_summary['Average PU stops']
+    route_summary['Predicted - Target'] = route_summary['Predicted Stops'] - route_summary['Target stops']
+
+    # Reorder columns for clarity
+    new_column_order = [
+        'ROUTE', 'total_shipments', 'unique_consignees',
+        'Average PU stops', 'Predicted Stops', 'Target stops', 'Predicted - Target',
+        'total_weight', 'total_pieces'
+    ]
+    route_summary = route_summary.reindex(columns=new_column_order)
 
     consignee_summary = hwb_aggregated.groupby(
         ['MATCHED_ROUTE', 'CONSIGNEE_NAME_NORM']
