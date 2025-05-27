@@ -39,7 +39,8 @@ def clean_street_name(address):
         'ulica', 'cesta', 'ul', 'street', 'road', 'd.o.o.', 'd.d.', 'eu', 'skl', 'vh', 'naselje', 'mesto'
     }
     address = normalize_diacritics(str(address))
-    address = re.sub(r'[^a-zA-Z0-9 ]', ' ', address)
+    # Remove all punctuation (including dots) and replace with space
+    address = re.sub(r'[^\w\s]', ' ', address)
     address = re.sub(r'\s+', ' ', address).lower()
     address = re.sub(r'([a-z])(\d)', r'\1 \2', address)
     address = re.sub(r'(\d)([a-z])', r'\1 \2', address)
@@ -107,29 +108,6 @@ def load_street_city_routes(path):
     except Exception as e:
         st.error(f"Street-city routes error: {str(e)}")
         return pd.DataFrame()
-
-def load_zip_routes_xls(path):
-    try:
-        xls = pd.ExcelFile(path)
-        zip_sheets = {}
-        for sheet in xls.sheet_names:
-            if not sheet.isdigit() or len(sheet) != 4:
-                continue
-            df = pd.read_excel(xls, sheet_name=sheet, header=1)
-            df = df.rename(columns={
-                df.columns[0]: 'STREET',
-                df.columns[1]: 'LOW',
-                df.columns[2]: 'HIGH',
-                df.columns[4]: 'ROUTE'
-            })
-            df['STREET_CLEAN'] = df['STREET'].apply(clean_street_name)
-            df['LOW_FLOAT'] = df['LOW'].apply(lambda x: house_number_to_float(str(x)) if pd.notna(x) else None)
-            df['HIGH_FLOAT'] = df['HIGH'].apply(lambda x: house_number_to_float(str(x)) if pd.notna(x) else None)
-            zip_sheets[sheet] = df
-        return zip_sheets
-    except Exception as e:
-        st.error(f"ZIP routes error: {str(e)}")
-        return {}
 
 def load_fallback_routes(path):
     try:
@@ -230,24 +208,23 @@ def process_manifest(file):
     return new_df
 
 # ==============================================
-# Route Matching Logic (Priority Order Updated)
+# Route Matching Logic (ZIP/Street-City Priority)
 # ==============================================
-def match_address_to_route(manifest_df, street_city_routes, zip_sheets, fallback_routes):
+def match_address_to_route(manifest_df, street_city_routes, fallback_routes):
     manifest_df['MATCHED_ROUTE'] = None
     manifest_df['MATCH_METHOD'] = None
     manifest_df['MATCH_SCORE'] = 0.0
-    
+
     special_zips = {'2000', '3000', '4000', '5000', '6000', '8000'}
 
     for idx, row in manifest_df.iterrows():
         zip_code = row['CONSIGNEE_ZIP']
         street_name = clean_street_name(row['CONSIGNEE_STREET'])
         city_name = clean_city_name(row['CONSIGNEE_CITY'])
-        house_num = row['HOUSE_NUMBER_FLOAT']
         matched = False
 
         if zip_code in special_zips:
-            # Priority: Street-City -> ZIP Fallback -> ZIP-specific
+            # Priority: Street-City -> ZIP Fallback
             if not street_city_routes.empty:
                 city_matches = street_city_routes[street_city_routes['CITY_CLEAN'] == city_name]
                 if not city_matches.empty:
@@ -276,23 +253,8 @@ def match_address_to_route(manifest_df, street_city_routes, zip_sheets, fallback
                 manifest_df.at[idx, 'MATCH_SCORE'] = 100.0
                 continue
 
-            if zip_code in zip_sheets:
-                sheet = zip_sheets[zip_code]
-                matches = process.extract(street_name, sheet['STREET_CLEAN'], scorer=fuzz.token_set_ratio, score_cutoff=65, limit=5)
-                for matched_street, score, _ in matches:
-                    street_rows = sheet[sheet['STREET_CLEAN'] == matched_street]
-                    for _, r in street_rows.iterrows():
-                        if (pd.isna(r['LOW_FLOAT']) or pd.isna(r['HIGH_FLOAT'])) or \
-                           (r['LOW_FLOAT'] <= house_num <= r['HIGH_FLOAT']):
-                            manifest_df.at[idx, 'MATCHED_ROUTE'] = r['ROUTE']
-                            manifest_df.at[idx, 'MATCH_METHOD'] = 'Street+House'
-                            manifest_df.at[idx, 'MATCH_SCORE'] = float(score)
-                            matched = True
-                            break
-                    if matched:
-                        break
         else:
-            # Default Priority: ZIP Fallback -> Street-City -> ZIP-specific
+            # Default Priority: ZIP Fallback -> Street-City
             if zip_code in fallback_routes['ZIP'].values:
                 manifest_df.at[idx, 'MATCHED_ROUTE'] = fallback_routes.loc[
                     fallback_routes['ZIP'] == zip_code, 'ROUTE'
@@ -320,22 +282,6 @@ def match_address_to_route(manifest_df, street_city_routes, zip_sheets, fallback
                         break
                     if matched:
                         continue
-
-            if zip_code in zip_sheets:
-                sheet = zip_sheets[zip_code]
-                matches = process.extract(street_name, sheet['STREET_CLEAN'], scorer=fuzz.token_set_ratio, score_cutoff=65, limit=5)
-                for matched_street, score, _ in matches:
-                    street_rows = sheet[sheet['STREET_CLEAN'] == matched_street]
-                    for _, r in street_rows.iterrows():
-                        if (pd.isna(r['LOW_FLOAT']) or pd.isna(r['HIGH_FLOAT'])) or \
-                           (r['LOW_FLOAT'] <= house_num <= r['HIGH_FLOAT']):
-                            manifest_df.at[idx, 'MATCHED_ROUTE'] = r['ROUTE']
-                            manifest_df.at[idx, 'MATCH_METHOD'] = 'Street+House'
-                            manifest_df.at[idx, 'MATCH_SCORE'] = float(score)
-                            matched = True
-                            break
-                    if matched:
-                        break
 
     return manifest_df
 
@@ -567,11 +513,10 @@ def main():
         st.info("Processing manifest...")
         
         street_city_routes = load_street_city_routes('input/route_street_city.xlsx')
-        zip_routes = load_zip_routes_xls('input/zip_routes.xls')
         fallback_routes = load_fallback_routes('input/routes_database.xlsx')
         
         manifest = process_manifest(uploaded_file)
-        matched_manifest = match_address_to_route(manifest, street_city_routes, zip_routes, fallback_routes)
+        matched_manifest = match_address_to_route(manifest, street_city_routes, fallback_routes)
         
         output_path = "output"
         os.makedirs(output_path, exist_ok=True)
