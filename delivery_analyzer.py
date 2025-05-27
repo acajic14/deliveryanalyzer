@@ -13,8 +13,9 @@ from datetime import datetime
 import re
 from rapidfuzz import fuzz, process
 from openpyxl import Workbook
-from openpyxl.styles import Font
+from openpyxl.styles import Font, PatternFill
 from openpyxl.utils.dataframe import dataframe_to_rows
+from openpyxl.formatting.rule import CellIsRule
 
 def normalize_diacritics(text):
     diacritic_map = {'č':'c', 'š':'s', 'ž':'z', 'Č':'c', 'Š':'s', 'Ž':'z'}
@@ -296,6 +297,22 @@ def fuzzy_group_names(df, group_col='CONSIGNEE_NAME_NORM', threshold=90):
         processed.update(matched_names)
     return pd.DataFrame(grouped_data)
 
+def add_target_conditional_formatting(sheet, col_letter, start_row, end_row):
+    red_fill = PatternFill(start_color='FFFF0000', end_color='FFFF0000', fill_type='solid')
+    yellow_fill = PatternFill(start_color='FFFFFF00', end_color='FFFFFF00', fill_type='solid')
+    green_fill = PatternFill(start_color='FF00FF00', end_color='FF00FF00', fill_type='solid')
+    # Red for values > +5 or < -5
+    sheet.conditional_formatting.add(f'{col_letter}{start_row}:{col_letter}{end_row}',
+        CellIsRule(operator='greaterThan', formula=['5'], fill=red_fill))
+    sheet.conditional_formatting.add(f'{col_letter}{start_row}:{col_letter}{end_row}',
+        CellIsRule(operator='lessThan', formula=['-5'], fill=red_fill))
+    # Yellow for values between -5 and 0
+    sheet.conditional_formatting.add(f'{col_letter}{start_row}:{col_letter}{end_row}',
+        CellIsRule(operator='between', formula=['-5', '0'], fill=yellow_fill))
+    # Green for values between 0 and +5
+    sheet.conditional_formatting.add(f'{col_letter}{start_row}:{col_letter}{end_row}',
+        CellIsRule(operator='between', formula=['0', '5'], fill=green_fill))
+
 def generate_reports(manifest_df, output_path, weight_thr=70, vol_weight_thr=150, pieces_thr=6):
     hwb_aggregated = manifest_df.groupby(['HWB', 'MATCHED_ROUTE']).agg({
         'CONSIGNEE_NAME_NORM': 'first',
@@ -331,14 +348,22 @@ def generate_reports(manifest_df, output_path, weight_thr=70, vol_weight_thr=150
     route_summary['Predicted Stops'] = route_summary['unique_consignees'] + route_summary['Average PU stops']
     route_summary['Predicted - Target'] = route_summary['Predicted Stops'] - route_summary['Target stops']
 
-    # Reorder columns for clarity and rename back for output
-    route_summary = route_summary.rename(columns={'ROUTE': 'MATCHED_ROUTE'})
+    # Round relevant columns to whole numbers
+    route_summary['Average PU stops'] = route_summary['Average PU stops'].round(0).astype('Int64')
+    route_summary['Predicted Stops'] = route_summary['Predicted Stops'].round(0).astype('Int64')
+    route_summary['Predicted - Target'] = route_summary['Predicted - Target'].round(0).astype('Int64')
+
+    # Insert empty column for visual spacing
+    route_summary.insert(5, '', '')
+
+    # Final column order
     new_column_order = [
-        'MATCHED_ROUTE', 'total_shipments', 'unique_consignees',
-        'Average PU stops', 'Predicted Stops', 'Target stops', 'Predicted - Target',
-        'total_weight', 'total_pieces'
+        'ROUTE', 'total_shipments', 'unique_consignees',
+        'total_weight', 'total_pieces', '',
+        'Average PU stops', 'Predicted Stops', 'Target stops', 'Predicted - Target'
     ]
     route_summary = route_summary.reindex(columns=new_column_order)
+    route_summary = route_summary.rename(columns={'ROUTE': 'MATCHED_ROUTE'})
 
     consignee_summary = hwb_aggregated.groupby(
         ['MATCHED_ROUTE', 'CONSIGNEE_NAME_NORM']
@@ -407,7 +432,8 @@ def generate_reports(manifest_df, output_path, weight_thr=70, vol_weight_thr=150
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M")
     os.makedirs(output_path, exist_ok=True)
-    with pd.ExcelWriter(f"{output_path}/route_summary_{timestamp}.xlsx", engine='openpyxl') as writer:
+    summary_path = f"{output_path}/route_summary_{timestamp}.xlsx"
+    with pd.ExcelWriter(summary_path, engine='openpyxl') as writer:
         route_summary.to_excel(writer, sheet_name='Summary', index=False)
         consignee_summary_fuzzy.rename(columns={'CANONICAL_NAME': 'CONSIGNEE_NAME'}, inplace=True)
         consignee_summary_fuzzy.to_excel(writer, sheet_name='Consignee_Summary', index=False)
@@ -447,6 +473,12 @@ def generate_reports(manifest_df, output_path, weight_thr=70, vol_weight_thr=150
                 pieces,
                 ratio
             ])
+
+        # Apply conditional formatting to "Predicted - Target" column (column J)
+        pred_target_col = 'J'
+        start_row = 2
+        end_row = len(route_summary) + 1
+        add_target_conditional_formatting(sheet, pred_target_col, start_row, end_row)
 
     # Save all output files for download
     special_cases_path = f"{output_path}/special_cases_{timestamp}.xlsx"
