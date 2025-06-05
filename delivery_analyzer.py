@@ -82,7 +82,7 @@ def house_number_to_float(hn):
         base += (ord(letter_part) - ord('a') + 1) * 0.01
     return base
 
-def load_street_city_routes(path):
+def load_street_c city_routes(path):
     try:
         df = pd.read_excel(path)
         df = df.rename(columns={
@@ -263,7 +263,7 @@ def match_address_to_route(manifest_df, street_city_routes, fallback_routes):
                     for matched_street, score, _ in matches:
                         best_match = city_matches[city_matches['STREET_CLEAN'] == matched_street].iloc[0]
                         manifest_df.at[idx, 'MATCHED_ROUTE'] = best_match['ROUTE']
-                        manifest_df.at[idx, 'MATCH_METHOD'] = 'Street-C City'
+                        manifest_df.at[idx, 'MATCH_METHOD'] = 'Street-City'
                         manifest_df.at[idx, 'MATCH_SCORE'] = float(score)
                         matched = True
                         break
@@ -310,7 +310,12 @@ def add_target_conditional_formatting(sheet, col_letter, start_row, end_row):
     sheet.conditional_formatting.add(f'{col_letter}{start_row}:{col_letter}{end_row}',
         CellIsRule(operator='between', formula=['0', '5'], font=green_font))
 
-def generate_reports(manifest_df, output_path, weight_thr=70, vol_weight_thr=150, pieces_thr=6):
+def generate_reports(manifest_df, output_path, 
+                    weight_thr=70, vol_weight_thr=150, pieces_thr=6,
+                    vehicle_weight_thr=70, vehicle_vol_thr=150, 
+                    vehicle_pieces_thr=12, vehicle_kg_per_piece_thr=10,
+                    vehicle_van_max_pieces=20):
+    
     hwb_aggregated = manifest_df.groupby(['HWB', 'MATCHED_ROUTE']).agg({
         'CONSIGNEE_NAME_NORM': 'first',
         'CONSIGNEE_NAME': 'first',
@@ -382,13 +387,24 @@ def generate_reports(manifest_df, output_path, weight_thr=70, vol_weight_thr=150
         lambda x: round(x['WEIGHT']/x['PIECES'], 2) if x['PIECES'] > pieces_thr else None,
         axis=1
     )
-    special_cases = special_cases[[
-        'HWB', 'CONSIGNEE_NAME', 'CONSIGNEE_ZIP', 'MATCHED_ROUTE',
-        'WEIGHT', 'VOLUMETRIC_WEIGHT', 'PIECES', 'TRIGGER_REASON', 'WEIGHT_PER_PIECE'
-    ]].sort_values(
-        by=['CONSIGNEE_ZIP', 'MATCHED_ROUTE', 'CONSIGNEE_NAME'],
-        ascending=[True, True, True]
-    )
+    
+    # Add vehicle suggestion columns
+    special_cases.insert(len(special_cases.columns), '', '')
+    
+    def get_vehicle_suggestion(row):
+        if pd.isna(row['WEIGHT_PER_PIECE']):
+            return "Van"
+            
+        conditions = [
+            row['WEIGHT'] > vehicle_weight_thr,
+            row['VOLUMETRIC_WEIGHT'] > vehicle_vol_thr,
+            row['PIECES'] > vehicle_pieces_thr,
+            (row['WEIGHT_PER_PIECE'] > vehicle_kg_per_piece_thr) and 
+            (row['PIECES'] > vehicle_van_max_pieces)
+        ]
+        return "Truck" if any(conditions) else "Van"
+    
+    special_cases['Capacity Suggestion'] = special_cases.apply(get_vehicle_suggestion, axis=1)
 
     matching_details = manifest_df[[
         'HWB', 'CONSIGNEE_NAME', 'CONSIGNEE_ZIP', 'CONSIGNEE_ADDRESS',
@@ -448,7 +464,25 @@ def generate_reports(manifest_df, output_path, weight_thr=70, vol_weight_thr=150
         end_row = len(route_summary) + 1
         add_target_conditional_formatting(sheet, pred_target_col, start_row, end_row)
 
-    special_cases.to_excel(special_cases_path, index=False)
+    # Save special cases with vehicle formatting
+    with pd.ExcelWriter(special_cases_path, engine='openpyxl') as writer:
+        special_cases.to_excel(writer, index=False)
+        workbook = writer.book
+        sheet = workbook.active
+        
+        # Create font styles
+        truck_font = Font(color='FF0000', bold=True)
+        van_font = Font(color='000000', bold=True)  # Black text
+        
+        # Apply formatting
+        suggestion_col = special_cases.columns.get_loc('Capacity Suggestion') + 1
+        for row_idx in range(2, len(special_cases)+2):
+            cell = sheet.cell(row=row_idx, column=suggestion_col)
+            if cell.value == "Truck":
+                cell.font = truck_font
+            elif cell.value == "Van":
+                cell.font = van_font
+
     matching_details.to_excel(matching_details_path, index=False)
     wth_mpcs_report = special_cases.sort_values('PIECES', ascending=False)
     wth_mpcs_report.to_excel(wth_mpcs_path, index=False)
@@ -513,10 +547,19 @@ def main():
     st.title("🚚 Delivery Route Analyzer")
     st.sidebar.header("Settings")
     
+    # Original thresholds
     weight_thr = st.sidebar.number_input("Weight Threshold (kg)", value=70)
     vol_weight_thr = st.sidebar.number_input("Volumetric Weight Threshold (kg)", value=150)
     pieces_thr = st.sidebar.number_input("Pieces Threshold", value=6)
     
+    # Vehicle suggestion thresholds
+    st.sidebar.subheader("Vehicle Suggestions")
+    vehicle_weight_thr = st.sidebar.number_input("Truck weight threshold (kg)", value=70)
+    vehicle_vol_thr = st.sidebar.number_input("Truck volumetric threshold (kg)", value=150)
+    vehicle_pieces_thr = st.sidebar.number_input("Truck pieces threshold", value=12)
+    vehicle_kg_per_piece_thr = st.sidebar.number_input("Max kg/piece for Van", value=10)
+    vehicle_van_max_pieces = st.sidebar.number_input("Max pieces for Van", value=20)
+
     uploaded_file = st.file_uploader("Upload Manifest File", type=["xlsx", "xls", "csv"])
     
     if uploaded_file:
@@ -530,7 +573,18 @@ def main():
         
         output_path = "output"
         os.makedirs(output_path, exist_ok=True)
-        timestamp, route_summary = generate_reports(matched_manifest, output_path, weight_thr, vol_weight_thr, pieces_thr)
+        timestamp, route_summary = generate_reports(
+            matched_manifest, 
+            output_path, 
+            weight_thr, 
+            vol_weight_thr, 
+            pieces_thr,
+            vehicle_weight_thr,
+            vehicle_vol_thr,
+            vehicle_pieces_thr,
+            vehicle_kg_per_piece_thr,
+            vehicle_van_max_pieces
+        )
         
         try:
             if not route_summary.empty and 'Predicted Stops' in route_summary:
