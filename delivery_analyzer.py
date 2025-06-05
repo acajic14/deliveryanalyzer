@@ -82,7 +82,7 @@ def house_number_to_float(hn):
         base += (ord(letter_part) - ord('a') + 1) * 0.01
     return base
 
-def load_street_c city_routes(path):
+def load_street_city_routes(path):
     try:
         df = pd.read_excel(path)
         df = df.rename(columns={
@@ -310,12 +310,13 @@ def add_target_conditional_formatting(sheet, col_letter, start_row, end_row):
     sheet.conditional_formatting.add(f'{col_letter}{start_row}:{col_letter}{end_row}',
         CellIsRule(operator='between', formula=['0', '5'], font=green_font))
 
-def generate_reports(manifest_df, output_path, 
-                    weight_thr=70, vol_weight_thr=150, pieces_thr=6,
-                    vehicle_weight_thr=70, vehicle_vol_thr=150, 
-                    vehicle_pieces_thr=12, vehicle_kg_per_piece_thr=10,
-                    vehicle_van_max_pieces=20):
-    
+def generate_reports(
+    manifest_df, output_path, 
+    weight_thr=70, vol_weight_thr=150, pieces_thr=6,
+    vehicle_weight_thr=70, vehicle_vol_thr=150, 
+    vehicle_pieces_thr=12, vehicle_kg_per_piece_thr=10,
+    vehicle_van_max_pieces=20
+):
     hwb_aggregated = manifest_df.groupby(['HWB', 'MATCHED_ROUTE']).agg({
         'CONSIGNEE_NAME_NORM': 'first',
         'CONSIGNEE_NAME': 'first',
@@ -387,23 +388,19 @@ def generate_reports(manifest_df, output_path,
         lambda x: round(x['WEIGHT']/x['PIECES'], 2) if x['PIECES'] > pieces_thr else None,
         axis=1
     )
-    
-    # Add vehicle suggestion columns
-    special_cases.insert(len(special_cases.columns), '', '')
-    
+
+    # Add blank spacer and vehicle suggestion columns
+    special_cases[''] = ''
     def get_vehicle_suggestion(row):
         if pd.isna(row['WEIGHT_PER_PIECE']):
             return "Van"
-            
         conditions = [
             row['WEIGHT'] > vehicle_weight_thr,
             row['VOLUMETRIC_WEIGHT'] > vehicle_vol_thr,
             row['PIECES'] > vehicle_pieces_thr,
-            (row['WEIGHT_PER_PIECE'] > vehicle_kg_per_piece_thr) and 
-            (row['PIECES'] > vehicle_van_max_pieces)
+            (row['WEIGHT_PER_PIECE'] > vehicle_kg_per_piece_thr) and (row['PIECES'] > vehicle_van_max_pieces)
         ]
         return "Truck" if any(conditions) else "Van"
-    
     special_cases['Capacity Suggestion'] = special_cases.apply(get_vehicle_suggestion, axis=1)
 
     matching_details = manifest_df[[
@@ -425,12 +422,10 @@ def generate_reports(manifest_df, output_path,
         route_summary.to_excel(writer, sheet_name='Summary', index=False)
         workbook = writer.book
         sheet = workbook['Summary']
-        
-        # Add PCC Statistics
+        # PCC stats and formatting as before...
         sheet.append([])
         sheet.append(["PCC Statistics:"])
         sheet.append(["Product", "Shipments", "Pieces", "Pieces/Shipment"])
-        
         pcc_categories = [
             ('WPX', 'WPX'),
             ('TDY', 'TDY'),
@@ -439,7 +434,6 @@ def generate_reports(manifest_df, output_path,
             ('ESU', 'ESU'),
             ('ALL', 'All volume')
         ]
-
         for pcc_code, label in pcc_categories:
             if 'PCC' in manifest_df.columns:
                 if pcc_code == 'ALL':
@@ -454,8 +448,6 @@ def generate_reports(manifest_df, output_path,
                 pieces = 0
                 ratio = 0.0
             sheet.append([label, shipments, pieces, ratio])
-
-        # Formatting
         for row in sheet.iter_rows(min_row=2, max_row=len(route_summary)+1, min_col=4, max_col=4):
             for cell in row:
                 cell.number_format = '0.0'
@@ -464,17 +456,13 @@ def generate_reports(manifest_df, output_path,
         end_row = len(route_summary) + 1
         add_target_conditional_formatting(sheet, pred_target_col, start_row, end_row)
 
-    # Save special cases with vehicle formatting
+    # Save special cases with Excel formatting for suggestion column
     with pd.ExcelWriter(special_cases_path, engine='openpyxl') as writer:
         special_cases.to_excel(writer, index=False)
         workbook = writer.book
         sheet = workbook.active
-        
-        # Create font styles
         truck_font = Font(color='FF0000', bold=True)
-        van_font = Font(color='000000', bold=True)  # Black text
-        
-        # Apply formatting
+        van_font = Font(color='000000', bold=True)
         suggestion_col = special_cases.columns.get_loc('Capacity Suggestion') + 1
         for row_idx in range(2, len(special_cases)+2):
             cell = sheet.cell(row=row_idx, column=suggestion_col)
@@ -487,57 +475,44 @@ def generate_reports(manifest_df, output_path,
     wth_mpcs_report = special_cases.sort_values('PIECES', ascending=False)
     wth_mpcs_report.to_excel(wth_mpcs_path, index=False)
 
-    # Priority Shipments Report
+    # Priority Shipments Report (unchanged)
     pcc_col = None
     for col in manifest_df.columns:
         if col.strip().upper() == 'PCC':
             pcc_col = col
             break
-
     if pcc_col:
         manifest_df[pcc_col] = manifest_df[pcc_col].astype(str).str.strip().str.upper()
         priority_codes = ['CMX', 'WMX', 'TDT', 'TDY']
         priority_pccs = manifest_df[manifest_df[pcc_col].isin(priority_codes)].copy()
-
         if not priority_pccs.empty:
             group1 = priority_pccs[priority_pccs[pcc_col].isin(['CMX', 'WMX'])].sort_values(
-                by=['CONSIGNEE_ZIP', 'MATCHED_ROUTE'], 
-                ascending=[True, True]
+                by=['CONSIGNEE_ZIP', 'MATCHED_ROUTE'], ascending=[True, True]
             )
             group2 = priority_pccs[priority_pccs[pcc_col].isin(['TDT', 'TDY'])].sort_values(
-                by=['CONSIGNEE_ZIP', 'MATCHED_ROUTE'],
-                ascending=[True, True]
+                by=['CONSIGNEE_ZIP', 'MATCHED_ROUTE'], ascending=[True, True]
             )
-
             wb = Workbook()
             ws = wb.active
             ws.title = "Priority Shipments"
-            
             cols = ['MATCHED_ROUTE', 'HWB', 'CONSIGNEE_NAME', 'CONSIGNEE_ZIP', pcc_col, 'WEIGHT', 'VOLUMETRIC_WEIGHT', 'PIECES']
             header_font = Font(bold=True)
-
             ws['A1'] = "CMX/WMX Priority Shipments"
             ws['A1'].font = header_font
-            
             ws.append([])
             for col_idx, col in enumerate(cols, 1):
                 ws.cell(row=3, column=col_idx, value=col).font = header_font
-            
             for row_idx, row in enumerate(dataframe_to_rows(group1[cols], index=False, header=False), 4):
                 for col_idx, value in enumerate(row, 1):
                     ws.cell(row=row_idx, column=col_idx, value=value)
-
             last_row = ws.max_row + 3
-            
             ws.cell(row=last_row, column=1, value="TDT/TDY Priority Shipments").font = header_font
             ws.append([])
             for col_idx, col in enumerate(cols, 1):
                 ws.cell(row=last_row + 2, column=col_idx, value=col).font = header_font
-            
             for row_idx, row in enumerate(dataframe_to_rows(group2[cols], index=False, header=False), last_row + 3):
                 for col_idx, value in enumerate(row, 1):
                     ws.cell(row=row_idx, column=col_idx, value=value)
-
             priority_file = f"{output_path}/Priority_Shipments_{timestamp}.xlsx"
             wb.save(priority_file)
 
@@ -546,46 +521,30 @@ def generate_reports(manifest_df, output_path,
 def main():
     st.title("🚚 Delivery Route Analyzer")
     st.sidebar.header("Settings")
-    
-    # Original thresholds
     weight_thr = st.sidebar.number_input("Weight Threshold (kg)", value=70)
     vol_weight_thr = st.sidebar.number_input("Volumetric Weight Threshold (kg)", value=150)
     pieces_thr = st.sidebar.number_input("Pieces Threshold", value=6)
-    
-    # Vehicle suggestion thresholds
     st.sidebar.subheader("Vehicle Suggestions")
     vehicle_weight_thr = st.sidebar.number_input("Truck weight threshold (kg)", value=70)
     vehicle_vol_thr = st.sidebar.number_input("Truck volumetric threshold (kg)", value=150)
     vehicle_pieces_thr = st.sidebar.number_input("Truck pieces threshold", value=12)
     vehicle_kg_per_piece_thr = st.sidebar.number_input("Max kg/piece for Van", value=10)
     vehicle_van_max_pieces = st.sidebar.number_input("Max pieces for Van", value=20)
-
     uploaded_file = st.file_uploader("Upload Manifest File", type=["xlsx", "xls", "csv"])
-    
     if uploaded_file:
         st.info("Processing manifest...")
-        
         street_city_routes = load_street_city_routes('input/route_street_city.xlsx')
         fallback_routes = load_fallback_routes('input/routes_database.xlsx')
-        
         manifest = process_manifest(uploaded_file)
         matched_manifest = match_address_to_route(manifest, street_city_routes, fallback_routes)
-        
         output_path = "output"
         os.makedirs(output_path, exist_ok=True)
         timestamp, route_summary = generate_reports(
-            matched_manifest, 
-            output_path, 
-            weight_thr, 
-            vol_weight_thr, 
-            pieces_thr,
-            vehicle_weight_thr,
-            vehicle_vol_thr,
-            vehicle_pieces_thr,
-            vehicle_kg_per_piece_thr,
-            vehicle_van_max_pieces
+            matched_manifest, output_path,
+            weight_thr, vol_weight_thr, pieces_thr,
+            vehicle_weight_thr, vehicle_vol_thr,
+            vehicle_pieces_thr, vehicle_kg_per_piece_thr, vehicle_van_max_pieces
         )
-        
         try:
             if not route_summary.empty and 'Predicted Stops' in route_summary:
                 predicted_spr = route_summary['Predicted Stops'].mean()
@@ -594,9 +553,7 @@ def main():
                 st.warning("No routes matched - cannot calculate SPR")
         except Exception as e:
             st.error(f"SPR calculation error: {str(e)}")
-        
         st.success("Processing complete! 🎉")
-        
         st.subheader("Standard Reports")
         col1, col2, col3 = st.columns(3)
         with col1:
@@ -608,7 +565,6 @@ def main():
         with col3:
             with open(f"{output_path}/matching_details_{timestamp}.xlsx", "rb") as f:
                 st.download_button("Matching Details", f, f"matching_details_{timestamp}.xlsx")
-
         st.subheader("Additional Reports")
         col4, col5 = st.columns(2)
         with col4:
@@ -620,7 +576,6 @@ def main():
                     st.download_button("Priority Shipments", f, f"Priority_Shipments_{timestamp}.xlsx")
             except FileNotFoundError:
                 st.write("Priority report unavailable (missing PCC data)")
-
         st.subheader("Preview of Processed Data")
         st.dataframe(matched_manifest.head(10))
 
