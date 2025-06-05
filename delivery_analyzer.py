@@ -283,15 +283,15 @@ def generate_reports(
         
         # Calculate statistics for insertion
         avg_predicted_stops = route_summary['Predicted Stops'].mean()
-        unmatched_shipments = route_summary.loc[route_summary['ROUTE'] == 'UNMATCHED', 'total_shipments'].sum() if 'UNMATCHED' in route_summary['ROUTE'].values else 0
+        unmatched_count = len(manifest_df[manifest_df['MATCHED_ROUTE'].isna() | (manifest_df['MATCHED_ROUTE'] == '')])
         
         # Add statistics between routes and PCC
         current_row = sheet.max_row + 2
         sheet.cell(row=current_row, column=1, value="Average Predicted Stops")
-        sheet.cell(row=current_row, column=2, value=avg_predicted_stops)
+        sheet.cell(row=current_row, column=2, value=round(avg_predicted_stops, 1))
         current_row += 1
         sheet.cell(row=current_row, column=1, value="Unmatched Route Shipments")
-        sheet.cell(row=current_row, column=2, value=unmatched_shipments)
+        sheet.cell(row=current_row, column=2, value=unmatched_count)
         current_row += 2
         
         # PCC Statistics
@@ -345,10 +345,38 @@ def generate_reports(
         # Add route prefix sheets
         route_prefixes = ['KR', 'LJ', 'KP', 'NG', 'NM', 'CE', 'MB']
         for prefix in route_prefixes:
-            prefix_data = manifest_df[manifest_df['MATCHED_ROUTE'].str.startswith(prefix, na=False)].copy()
+            # Filter data for this prefix - handle NaN values properly
+            prefix_data = manifest_df[
+                manifest_df['MATCHED_ROUTE'].str.startswith(prefix, na=False)
+            ].copy()
+            
             if not prefix_data.empty:
-                prefix_data = prefix_data[['MATCHED_ROUTE', 'CONSIGNEE_NAME', 'CONSIGNEE_ADDRESS', 'CONSIGNEE_CITY', 'CONSIGNEE_ZIP', 'HWB', 'PIECES']]
-                prefix_data.to_excel(writer, sheet_name=prefix, index=False)
+                # Select and rename columns
+                sheet_data = prefix_data[[
+                    'MATCHED_ROUTE', 'CONSIGNEE_NAME', 'CONSIGNEE_ADDRESS', 
+                    'CONSIGNEE_CITY', 'CONSIGNEE_ZIP', 'HWB', 'PIECES'
+                ]].copy()
+                
+                # Rename columns for clarity
+                sheet_data.columns = [
+                    'MATCHED ROUTE', 'CONSIGNEE', 'CONSIGNEE ADDRESS', 
+                    'CITY', 'ZIP', 'AWB', 'PIECES'
+                ]
+                
+                # Sort by route then ZIP
+                sheet_data = sheet_data.sort_values(['MATCHED ROUTE', 'ZIP'])
+                
+                # Create the sheet
+                try:
+                    sheet_data.to_excel(writer, sheet_name=prefix, index=False)
+                except Exception as e:
+                    st.warning(f"Could not create sheet {prefix}: {str(e)}")
+            else:
+                # Create empty sheet if no data
+                pd.DataFrame(columns=[
+                    'MATCHED ROUTE', 'CONSIGNEE', 'CONSIGNEE ADDRESS', 
+                    'CITY', 'ZIP', 'AWB', 'PIECES'
+                ]).to_excel(writer, sheet_name=prefix, index=False)
 
     # Special Cases (with all original functionality)
     special_cases = manifest_df[
