@@ -392,13 +392,13 @@ def generate_reports(
     # Add blank spacer and vehicle suggestion columns
     special_cases[''] = ''
     def get_vehicle_suggestion(row):
-        if pd.isna(row['WEIGHT_PER_PIECE']):
-            return "Van"
         conditions = [
             row['WEIGHT'] > vehicle_weight_thr,
             row['VOLUMETRIC_WEIGHT'] > vehicle_vol_thr,
             row['PIECES'] > vehicle_pieces_thr,
-            (row['WEIGHT_PER_PIECE'] > vehicle_kg_per_piece_thr) and (row['PIECES'] > vehicle_van_max_pieces)
+            (not pd.isna(row['WEIGHT_PER_PIECE'])) and 
+            (row['WEIGHT_PER_PIECE'] > vehicle_kg_per_piece_thr) and 
+            (row['PIECES'] > vehicle_van_max_pieces)
         ]
         return "Truck" if any(conditions) else "Van"
     special_cases['Capacity Suggestion'] = special_cases.apply(get_vehicle_suggestion, axis=1)
