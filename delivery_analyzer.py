@@ -17,6 +17,7 @@ from openpyxl.styles import Font
 from openpyxl.utils.dataframe import dataframe_to_rows
 from openpyxl.formatting.rule import CellIsRule
 
+# --- Helper functions ---
 def normalize_diacritics(text):
     diacritic_map = {'č':'c', 'š':'s', 'ž':'z', 'Č':'c', 'Š':'s', 'Ž':'z'}
     return ''.join(diacritic_map.get(c, c) for c in text)
@@ -36,10 +37,7 @@ def clean_street_name(address):
     address = re.sub(r'([a-z])(\d)', r'\1 \2', address)
     address = re.sub(r'(\d)([a-z])', r'\1 \2', address)
     parts = address.split()
-    while parts and (
-        re.match(r'^\d{4}$', parts[-1]) or
-        parts[-1] in irrelevant_words
-    ):
+    while parts and (re.match(r'^\d{4}$', parts[-1]) or parts[-1] in irrelevant_words):
         parts.pop()
     cleaned_parts = []
     for part in parts:
@@ -325,6 +323,9 @@ def generate_reports(
     timestamp = datetime.now().strftime("%Y%m%d_%H%M")
     os.makedirs(output_path, exist_ok=True)
     summary_path = f"{output_path}/route_summary_{timestamp}.xlsx"
+    special_cases_path = f"{output_path}/special_cases_{timestamp}.xlsx"
+    matching_details_path = f"{output_path}/matching_details_{timestamp}.xlsx"
+    wth_mpcs_path = f"{output_path}/WTH_MPCS_Report_{timestamp}.xlsx"
 
     with pd.ExcelWriter(summary_path, engine='openpyxl') as writer:
         route_summary.to_excel(writer, sheet_name='Summary', index=False)
@@ -375,7 +376,23 @@ def generate_reports(
 
         add_target_conditional_formatting(sheet, 'J', 2, len(route_summary)+1)
 
-    # ... (rest of your report generation code for special cases, MBX, etc.) ...
+    # Save special_cases to Excel so download button works
+    special_cases = manifest_df[
+        (manifest_df['WEIGHT'] > weight_thr) |
+        (manifest_df['VOLUMETRIC_WEIGHT'] > vol_weight_thr) |
+        (manifest_df['PIECES'] > pieces_thr)
+    ].copy()
+    special_cases.to_excel(special_cases_path, index=False)
+
+    # Save matching_details to Excel so download button works
+    matching_details = manifest_df[[
+        'HWB', 'CONSIGNEE_NAME', 'CONSIGNEE_ZIP', 'CONSIGNEE_ADDRESS',
+        'MATCHED_ROUTE', 'MATCH_METHOD'
+    ]].copy()
+    matching_details.to_excel(matching_details_path, index=False)
+
+    # Save WTH_MPCS_Report to Excel so download button works
+    special_cases.sort_values('PIECES', ascending=False).to_excel(wth_mpcs_path, index=False)
 
     return timestamp, route_summary, None
 
