@@ -403,6 +403,9 @@ def generate_reports(
         return "Truck" if any(conditions) else "Van"
     special_cases['Capacity Suggestion'] = special_cases.apply(get_vehicle_suggestion, axis=1)
 
+    # SORT BY ZIP CODE ASCENDING
+    special_cases = special_cases.sort_values(by="CONSIGNEE_ZIP", ascending=True)
+
     matching_details = manifest_df[[
         'HWB', 'CONSIGNEE_NAME', 'CONSIGNEE_ZIP', 'CONSIGNEE_ADDRESS',
         'MATCHED_ROUTE', 'MATCH_METHOD'
