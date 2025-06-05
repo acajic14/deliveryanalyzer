@@ -328,11 +328,15 @@ def generate_reports(
 
     with pd.ExcelWriter(summary_path, engine='openpyxl') as writer:
         route_summary.to_excel(writer, sheet_name='Summary', index=False)
-        workbook = writer.book
-        sheet = workbook['Summary']
-        sheet.append([])
-        sheet.append(["PCC Statistics:"])
-        sheet.append(["Product", "Shipments", "Pieces", "Pieces/Shipment"])
+        sheet = writer.sheets['Summary']
+        current_row = sheet.max_row + 2
+        sheet.cell(row=current_row, column=1, value="PCC Statistics:")
+        current_row += 1
+        sheet.cell(row=current_row, column=1, value="Product")
+        sheet.cell(row=current_row, column=2, value="Shipments")
+        sheet.cell(row=current_row, column=3, value="Pieces")
+        sheet.cell(row=current_row, column=4, value="Pieces/Shipment")
+        current_row += 1
         pcc_categories = [
             ('WPX', 'WPX'), ('TDY', 'TDY'), ('ESI', 'ESI'),
             ('ECX', 'ECX'), ('ESU', 'ESU'), ('ALL', 'All volume')
@@ -345,21 +349,31 @@ def generate_reports(
                 ratio = round(pieces / shipments, 2) if shipments > 0 else 0.0
             else:
                 shipments, pieces, ratio = 0, 0, 0.0
-            sheet.append([label, shipments, pieces, ratio])
-        for row in sheet.iter_rows(min_row=2, max_row=len(route_summary)+1, min_col=4, max_col=4):
-            for cell in row: cell.number_format = '0.0'
-        add_target_conditional_formatting(sheet, 'J', 2, len(route_summary)+1)
+            sheet.cell(row=current_row, column=1, value=label)
+            sheet.cell(row=current_row, column=2, value=shipments)
+            sheet.cell(row=current_row, column=3, value=pieces)
+            sheet.cell(row=current_row, column=4, value=ratio)
+            current_row += 1
 
         # ZIP Code Statistics section
         zip_stats = manifest_df.groupby('CONSIGNEE_ZIP').agg(
             total_shipments=('HWB', 'nunique'),
             unique_consignees=('CONSIGNEE_NAME_NORM', 'nunique')
         ).reset_index().sort_values('CONSIGNEE_ZIP', ascending=True)
-        sheet.append([])
-        sheet.append(["ZIP Code Statistics:"])
-        sheet.append(["ZIP Code", "Shipments", "Unique Consignees"])
+        current_row += 2
+        sheet.cell(row=current_row, column=1, value="ZIP Code Statistics:")
+        current_row += 1
+        sheet.cell(row=current_row, column=1, value="ZIP Code")
+        sheet.cell(row=current_row, column=2, value="Shipments")
+        sheet.cell(row=current_row, column=3, value="Unique Consignees")
+        current_row += 1
         for _, row in zip_stats.iterrows():
-            sheet.append([row['CONSIGNEE_ZIP'], row['total_shipments'], row['unique_consignees']])
+            sheet.cell(row=current_row, column=1, value=row['CONSIGNEE_ZIP'])
+            sheet.cell(row=current_row, column=2, value=row['total_shipments'])
+            sheet.cell(row=current_row, column=3, value=row['unique_consignees'])
+            current_row += 1
+
+        add_target_conditional_formatting(sheet, 'J', 2, len(route_summary)+1)
 
     # ... (rest of your report generation code for special cases, MBX, etc.) ...
 
