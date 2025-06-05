@@ -17,7 +17,6 @@ from openpyxl.styles import Font
 from openpyxl.utils.dataframe import dataframe_to_rows
 from openpyxl.formatting.rule import CellIsRule
 
-# --- Helper functions ---
 def normalize_diacritics(text):
     diacritic_map = {'č':'c', 'š':'s', 'ž':'z', 'Č':'C', 'Š':'S', 'Ž':'Z'}
     return ''.join(diacritic_map.get(c, c) for c in text)
@@ -115,7 +114,7 @@ def process_manifest(file):
     try:
         if file.name.endswith(('.xlsx', '.xls')):
             df = pd.read_excel(file)
-        else:  # CSV
+        else:
             df = pd.read_csv(file, delimiter=',', quotechar='"', engine='python')
     except Exception as e:
         st.error(f"Error reading file: {str(e)}")
@@ -142,6 +141,9 @@ def process_manifest(file):
         else:
             new_df[new] = pd.Series('', index=df.index, dtype='str')
 
+    new_df['PIECES'] = new_df['PIECES'].apply(parse_pieces)
+    new_df['PCC'] = new_df['PCC'].astype(str).str.strip().str.upper() if 'PCC' in new_df.columns else None
+
     street1 = new_df['CONSIGNEE_STREET1'].fillna('')
     street2 = new_df['CONSIGNEE_STREET2'].fillna('')
     new_df['CONSIGNEE_STREET'] = street1.str.strip() + ' ' + street2.str.strip()
@@ -155,8 +157,10 @@ def process_manifest(file):
         new_df['CONSIGNEE_ZIP'] = new_df['CONSIGNEE_ZIP'].astype(str).str.extract(r'(\d{4})')[0].str.zfill(4)
 
     for col in ['WEIGHT', 'VOLUMETRIC_WEIGHT']:
-        if col in new_df.columns: new_df[col] = pd.to_numeric(new_df[col], errors='coerce').fillna(0)
-    if 'PIECES' in new_df.columns: new_df['PIECES'] = new_df['PIECES'].fillna(1)
+        if col in new_df.columns: 
+            new_df[col] = pd.to_numeric(new_df[col], errors='coerce').fillna(0)
+    
+    new_df['PIECES'] = pd.to_numeric(new_df['PIECES'], errors='coerce').fillna(1)
 
     new_df['MATCHED_ROUTE'] = None
     new_df['MATCH_SCORE'] = 0.0
@@ -265,7 +269,6 @@ def generate_reports(
     timestamp = datetime.now().strftime("%Y%m%d_%H%M")
     os.makedirs(output_path, exist_ok=True)
     
-    # File paths
     summary_path = f"{output_path}/route_summary_{timestamp}.xlsx"
     special_cases_path = f"{output_path}/special_cases_{timestamp}.xlsx"
     matching_details_path = f"{output_path}/matching_details_{timestamp}.xlsx"
@@ -287,15 +290,19 @@ def generate_reports(
         sheet.cell(row=current_row, column=3, value="Pieces")
         sheet.cell(row=current_row, column=4, value="Pieces/Shipment")
         current_row += 1
+        
         pcc_categories = [('WPX','WPX'), ('TDY','TDY'), ('ESI','ESI'), ('ECX','ECX'), ('ESU','ESU'), ('ALL','All volume')]
         for code, label in pcc_categories:
             if 'PCC' in manifest_df.columns:
                 filtered = manifest_df[manifest_df['PCC'] == code] if code != 'ALL' else manifest_df
-                shipments = filtered['HWB'].nunique()
-                pieces = filtered['PIECES'].sum()
-                ratio = round(pieces/shipments, 2) if shipments else 0
+                try:
+                    shipments = int(filtered['HWB'].nunique())
+                    pieces = int(filtered['PIECES'].sum())
+                    ratio = round(pieces/shipments, 2) if shipments > 0 else 0.0
+                except (TypeError, ZeroDivisionError, ValueError):
+                    shipments, pieces, ratio = 0, 0, 0.0
             else:
-                shipments = pieces = ratio = 0
+                shipments, pieces, ratio = 0, 0, 0.0
             sheet.cell(row=current_row, column=1, value=label)
             sheet.cell(row=current_row, column=2, value=shipments)
             sheet.cell(row=current_row, column=3, value=pieces)
@@ -328,27 +335,117 @@ def generate_reports(
         (manifest_df['WEIGHT'] > weight_thr) |
         (manifest_df['VOLUMETRIC_WEIGHT'] > vol_weight_thr) |
         (manifest_df['PIECES'] > pieces_thr)
-    ]
-    special_cases.to_excel(special_cases_path, index=False) if not special_cases.empty else pd.DataFrame().to_excel(special_cases_path)
+    ].copy()
+    
+    if not special_cases.empty:
+        special_cases = special_cases.groupby('HWB').agg({
+            'CONSIGNEE_NAME': 'first',
+            'CONSIGNEE_ZIP': 'first',
+            'MATCHED_ROUTE': 'first',
+            'WEIGHT': 'max',
+            'VOLUMETRIC_WEIGHT': 'max',
+            'PIECES': 'first'
+        }).reset_index()
+        
+        def get_trigger_reason(row):
+            reasons = []
+            if row['WEIGHT'] > weight_thr: reasons.append(f'Weight >{weight_thr}kg')
+            if row['VOLUMETRIC_WEIGHT'] > vol_weight_thr: reasons.append(f'Volumetric >{vol_weight_thr}kg')
+            if row['PIECES'] > pieces_thr: reasons.append(f'Pieces >{pieces_thr}')
+            return ', '.join(reasons) if reasons else None
+        
+        special_cases['TRIGGER_REASON'] = special_cases.apply(get_trigger_reason, axis=1)
+        special_cases['WEIGHT_PER_PIECE'] = special_cases.apply(
+            lambda x: round(x['WEIGHT']/x['PIECES'], 2) if x['PIECES'] > pieces_thr else None, axis=1)
+        
+        special_cases[''] = ''
+        def get_vehicle_suggestion(row):
+            conditions = [
+                row['WEIGHT'] > vehicle_weight_thr,
+                row['VOLUMETRIC_WEIGHT'] > vehicle_vol_thr,
+                row['PIECES'] > vehicle_pieces_thr,
+                (not pd.isna(row['WEIGHT_PER_PIECE'])) and 
+                (row['WEIGHT_PER_PIECE'] > vehicle_kg_per_piece_thr) and 
+                (row['PIECES'] > vehicle_van_max_pieces)
+            ]
+            return "Truck" if any(conditions) else "Van"
+        
+        special_cases['Capacity Suggestion'] = special_cases.apply(get_vehicle_suggestion, axis=1)
+        special_cases = special_cases.sort_values(by="CONSIGNEE_ZIP", ascending=True)
+        
+        with pd.ExcelWriter(special_cases_path, engine='openpyxl') as writer:
+            special_cases.to_excel(writer, index=False)
+            workbook = writer.book
+            sheet = workbook.active
+            truck_font = Font(color='FF0000', bold=True)
+            van_font = Font(color='000000', bold=True)
+            suggestion_col = special_cases.columns.get_loc('Capacity Suggestion') + 1
+            for row_idx in range(2, len(special_cases)+2):
+                cell = sheet.cell(row=row_idx, column=suggestion_col)
+                if cell.value == "Truck":
+                    cell.font = truck_font
+                elif cell.value == "Van":
+                    cell.font = van_font
+    else:
+        pd.DataFrame().to_excel(special_cases_path, index=False)
 
     # Matching Details
-    manifest_df[['HWB', 'CONSIGNEE_NAME', 'CONSIGNEE_ZIP', 'CONSIGNEE_ADDRESS', 'MATCHED_ROUTE', 'MATCH_METHOD']].to_excel(matching_details_path, index=False)
+    matching_details = manifest_df[['HWB', 'CONSIGNEE_NAME', 'CONSIGNEE_ZIP', 'CONSIGNEE_ADDRESS', 'MATCHED_ROUTE', 'MATCH_METHOD']].copy()
+    matching_details['MATCHED_ROUTE'] = matching_details['MATCHED_ROUTE'].fillna('UNMATCHED')
+    matching_details['MATCH_METHOD'] = matching_details['MATCH_METHOD'].fillna('UNMATCHED')
+    matching_details.rename(columns={'MATCH_METHOD': 'MATCHING_METHOD'}, inplace=True)
+    matching_details.to_excel(matching_details_path, index=False)
 
     # WTH MPCS Report
-    (manifest_df.sort_values('PIECES', ascending=False)
-     .to_excel(wth_mpcs_path, index=False))
+    wth_mpcs_report = special_cases.sort_values('PIECES', ascending=False) if not special_cases.empty else pd.DataFrame()
+    wth_mpcs_report.to_excel(wth_mpcs_path, index=False)
 
     # Priority Shipments
     if 'PCC' in manifest_df.columns:
-        priority = manifest_df[manifest_df['PCC'].isin(['CMX', 'WMX', 'TDT', 'TDY'])].sort_values('CONSIGNEE_ZIP')
-        priority.to_excel(priority_path, index=False) if not priority.empty else pd.DataFrame().to_excel(priority_path)
+        manifest_df['PCC'] = manifest_df['PCC'].astype(str).str.strip().str.upper()
+        priority_codes = ['CMX', 'WMX', 'TDT', 'TDY']
+        priority_pccs = manifest_df[manifest_df['PCC'].isin(priority_codes)]
+        if not priority_pccs.empty:
+            group1 = priority_pccs[priority_pccs['PCC'].isin(['CMX', 'WMX'])].sort_values(
+                by=['CONSIGNEE_ZIP', 'MATCHED_ROUTE'], ascending=[True, True])
+            group2 = priority_pccs[priority_pccs['PCC'].isin(['TDT', 'TDY'])].sort_values(
+                by=['CONSIGNEE_ZIP', 'MATCHED_ROUTE'], ascending=[True, True])
+            
+            wb = Workbook()
+            ws = wb.active
+            ws.title = "Priority Shipments"
+            cols = ['MATCHED_ROUTE', 'HWB', 'CONSIGNEE_NAME', 'CONSIGNEE_ZIP', 'PCC', 'WEIGHT', 'VOLUMETRIC_WEIGHT', 'PIECES']
+            header_font = Font(bold=True)
+            ws['A1'] = "CMX/WMX Priority Shipments"
+            ws['A1'].font = header_font
+            ws.append([])
+            for col_idx, col in enumerate(cols, 1):
+                ws.cell(row=3, column=col_idx, value=col).font = header_font
+            for row_idx, row in enumerate(dataframe_to_rows(group1[cols], index=False, header=False), 4):
+                for col_idx, value in enumerate(row, 1):
+                    ws.cell(row=row_idx, column=col_idx, value=value)
+            last_row = ws.max_row + 3
+            ws.cell(row=last_row, column=1, value="TDT/TDY Priority Shipments").font = header_font
+            ws.append([])
+            for col_idx, col in enumerate(cols, 1):
+                ws.cell(row=last_row + 2, column=col_idx, value=col).font = header_font
+            for row_idx, row in enumerate(dataframe_to_rows(group2[cols], index=False, header=False), last_row + 3):
+                for col_idx, value in enumerate(row, 1):
+                    ws.cell(row=row_idx, column=col_idx, value=value)
+            wb.save(priority_path)
+        else:
+            pd.DataFrame().to_excel(priority_path, index=False)
     else:
-        pd.DataFrame().to_excel(priority_path)
+        pd.DataFrame().to_excel(priority_path, index=False)
 
     # MBX Report
     mbx_routes = {'MB1A', 'MB1B', 'MB1C', 'MB1X', 'MB2A', 'MB2B', 'MB2C', 'MB2X'}
-    mbx_report = manifest_df[manifest_df['MATCHED_ROUTE'].isin(mbx_routes)].sort_values(['MATCHED_ROUTE', 'CONSIGNEE_ZIP'])
-    mbx_report.to_excel(mbx_path, index=False) if not mbx_report.empty else pd.DataFrame().to_excel(mbx_path)
+    mbx_report = manifest_df[manifest_df['MATCHED_ROUTE'].isin(mbx_routes)][['HWB', 'CONSIGNEE_NAME', 'CONSIGNEE_ADDRESS', 'CONSIGNEE_ZIP', 'MATCHED_ROUTE']]
+    if not mbx_report.empty:
+        mbx_report = mbx_report.sort_values(by=['MATCHED_ROUTE', 'CONSIGNEE_ZIP'], ascending=[True, True])
+        mbx_report.to_excel(mbx_path, index=False)
+    else:
+        pd.DataFrame().to_excel(mbx_path, index=False)
 
     return timestamp, route_summary, mbx_path
 
@@ -370,13 +467,11 @@ def main():
     if uploaded_file:
         st.info("Processing manifest...")
         
-        # Load routes and process manifest
         street_city_routes = load_street_city_routes('input/route_street_city.xlsx')
         fallback_routes = load_fallback_routes('input/routes_database.xlsx')
         manifest = process_manifest(uploaded_file)
         matched_manifest = match_address_to_route(manifest, street_city_routes, fallback_routes)
         
-        # Generate reports
         output_path = "output"
         os.makedirs(output_path, exist_ok=True)
         timestamp, route_summary, mbx_path = generate_reports(
@@ -386,7 +481,6 @@ def main():
             vehicle_pieces_thr, vehicle_kg_per_piece_thr, vehicle_van_max_pieces
         )
 
-        # Display results
         try:
             if not route_summary.empty and 'Predicted Stops' in route_summary:
                 predicted_spr = route_summary['Predicted Stops'].mean()
@@ -398,7 +492,6 @@ def main():
         
         st.success("Processing complete! 🎉")
         
-        # Reports download section
         st.subheader("Standard Reports")
         col1, col2, col3 = st.columns(3)
         with col1:
@@ -423,7 +516,7 @@ def main():
         st.subheader("Specialized Reports")
         col6, col7 = st.columns(2)
         with col7:
-            if os.path.exists(mbx_path):
+            if mbx_path and os.path.exists(mbx_path):
                 with open(mbx_path, "rb") as f:
                     st.download_button(
                         "MBX Details",
