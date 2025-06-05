@@ -276,13 +276,25 @@ def generate_reports(
     priority_path = f"{output_path}/Priority_Shipments_{timestamp}.xlsx"
     mbx_path = f"{output_path}/MBX_details_{timestamp}.xlsx"
 
-    # Route Summary with ZIP Statistics
+    # Route Summary with ZIP Statistics and Multiple Sheets
     with pd.ExcelWriter(summary_path, engine='openpyxl') as writer:
         route_summary.to_excel(writer, sheet_name='Summary', index=False)
         sheet = writer.sheets['Summary']
         
-        # PCC Statistics
+        # Calculate statistics for insertion
+        avg_predicted_stops = route_summary['Predicted Stops'].mean()
+        unmatched_shipments = route_summary.loc[route_summary['ROUTE'] == 'UNMATCHED', 'total_shipments'].sum() if 'UNMATCHED' in route_summary['ROUTE'].values else 0
+        
+        # Add statistics between routes and PCC
         current_row = sheet.max_row + 2
+        sheet.cell(row=current_row, column=1, value="Average Predicted Stops")
+        sheet.cell(row=current_row, column=2, value=avg_predicted_stops)
+        current_row += 1
+        sheet.cell(row=current_row, column=1, value="Unmatched Route Shipments")
+        sheet.cell(row=current_row, column=2, value=unmatched_shipments)
+        current_row += 2
+        
+        # PCC Statistics
         sheet.cell(row=current_row, column=1, value="PCC Statistics:")
         current_row += 1
         sheet.cell(row=current_row, column=1, value="Product")
@@ -330,7 +342,15 @@ def generate_reports(
 
         add_target_conditional_formatting(sheet, 'J', 2, len(route_summary)+1)
 
-    # Special Cases
+        # Add route prefix sheets
+        route_prefixes = ['KR', 'LJ', 'KP', 'NG', 'NM', 'CE', 'MB']
+        for prefix in route_prefixes:
+            prefix_data = manifest_df[manifest_df['MATCHED_ROUTE'].str.startswith(prefix, na=False)].copy()
+            if not prefix_data.empty:
+                prefix_data = prefix_data[['MATCHED_ROUTE', 'CONSIGNEE_NAME', 'CONSIGNEE_ADDRESS', 'CONSIGNEE_CITY', 'CONSIGNEE_ZIP', 'HWB', 'PIECES']]
+                prefix_data.to_excel(writer, sheet_name=prefix, index=False)
+
+    # Special Cases (with all original functionality)
     special_cases = manifest_df[
         (manifest_df['WEIGHT'] > weight_thr) |
         (manifest_df['VOLUMETRIC_WEIGHT'] > vol_weight_thr) |
