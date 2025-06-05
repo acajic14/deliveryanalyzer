@@ -17,9 +17,7 @@ from openpyxl.styles import Font
 from openpyxl.utils.dataframe import dataframe_to_rows
 from openpyxl.formatting.rule import CellIsRule
 
-# ======================
-# HELPER FUNCTIONS
-# ======================
+# --- Helper functions ---
 def normalize_diacritics(text):
     diacritic_map = {'č':'c', 'š':'s', 'ž':'z', 'Č':'C', 'Š':'S', 'Ž':'Z'}
     return ''.join(diacritic_map.get(c, c) for c in text)
@@ -139,21 +137,23 @@ def process_manifest(file):
 
     new_df = pd.DataFrame()
     for orig, new in column_map.items():
-        new_df[new] = df[orig] if orig in df.columns else None
+        if orig in df.columns:
+            new_df[new] = df[orig].astype(str)
+        else:
+            new_df[new] = pd.Series('', index=df.index, dtype='str')
 
-    new_df['PIECES'] = new_df['PIECES'].apply(parse_pieces)
-    new_df['PCC'] = new_df['PCC'].astype(str).str.strip().str.upper() if 'PCC' in new_df.columns else None
+    street1 = new_df['CONSIGNEE_STREET1'].fillna('')
+    street2 = new_df['CONSIGNEE_STREET2'].fillna('')
+    new_df['CONSIGNEE_STREET'] = street1.str.strip() + ' ' + street2.str.strip()
+    new_df['CONSIGNEE_STREET'] = new_df['CONSIGNEE_STREET'].str.replace('nan', '').str.strip()
 
-    streets = new_df['CONSIGNEE_STREET1'].fillna('') + ' ' + new_df['CONSIGNEE_STREET2'].fillna('')
-    new_df['CONSIGNEE_STREET'] = streets.str.strip().replace('nan', '')
-    
     new_df['HOUSE_NUMBER'] = new_df['CONSIGNEE_STREET'].apply(extract_house_number)
     new_df['HOUSE_NUMBER_FLOAT'] = new_df['HOUSE_NUMBER'].apply(house_number_to_float)
     new_df['STREET_NAME'] = new_df['CONSIGNEE_STREET'].apply(clean_street_name)
     
     if 'CONSIGNEE_ZIP' in new_df.columns:
         new_df['CONSIGNEE_ZIP'] = new_df['CONSIGNEE_ZIP'].astype(str).str.extract(r'(\d{4})')[0].str.zfill(4)
-    
+
     for col in ['WEIGHT', 'VOLUMETRIC_WEIGHT']:
         if col in new_df.columns: new_df[col] = pd.to_numeric(new_df[col], errors='coerce').fillna(0)
     if 'PIECES' in new_df.columns: new_df['PIECES'] = new_df['PIECES'].fillna(1)
@@ -177,7 +177,6 @@ def match_address_to_route(manifest_df, street_city_routes, fallback_routes):
         city_name = clean_city_name(row['CONSIGNEE_CITY'])
         matched = False
 
-        # Special ZIP handling
         if zip_code in special_zips:
             if not street_city_routes.empty:
                 city_matches = street_city_routes[street_city_routes['CITY_CLEAN'] == city_name]
@@ -230,7 +229,6 @@ def generate_reports(
     vehicle_weight_thr=70, vehicle_vol_thr=150, vehicle_pieces_thr=12,
     vehicle_kg_per_piece_thr=10, vehicle_van_max_pieces=20
 ):
-    # Aggregation and summary calculations
     hwb_aggregated = manifest_df.groupby(['HWB', 'MATCHED_ROUTE']).agg({
         'CONSIGNEE_NAME_NORM': 'first',
         'CONSIGNEE_NAME': 'first',
