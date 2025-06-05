@@ -263,7 +263,7 @@ def match_address_to_route(manifest_df, street_city_routes, fallback_routes):
                     for matched_street, score, _ in matches:
                         best_match = city_matches[city_matches['STREET_CLEAN'] == matched_street].iloc[0]
                         manifest_df.at[idx, 'MATCHED_ROUTE'] = best_match['ROUTE']
-                        manifest_df.at[idx, 'MATCH_METHOD'] = 'Street-City'
+                        manifest_df.at[idx, 'MATCH_METHOD'] = 'Street-C City'
                         manifest_df.at[idx, 'MATCH_SCORE'] = float(score)
                         matched = True
                         break
@@ -409,6 +409,37 @@ def generate_reports(manifest_df, output_path, weight_thr=70, vol_weight_thr=150
         route_summary.to_excel(writer, sheet_name='Summary', index=False)
         workbook = writer.book
         sheet = workbook['Summary']
+        
+        # Add PCC Statistics
+        sheet.append([])
+        sheet.append(["PCC Statistics:"])
+        sheet.append(["Product", "Shipments", "Pieces", "Pieces/Shipment"])
+        
+        pcc_categories = [
+            ('WPX', 'WPX'),
+            ('TDY', 'TDY'),
+            ('ESI', 'ESI'),
+            ('ECX', 'ECX'),
+            ('ESU', 'ESU'),
+            ('ALL', 'All volume')
+        ]
+
+        for pcc_code, label in pcc_categories:
+            if 'PCC' in manifest_df.columns:
+                if pcc_code == 'ALL':
+                    filtered_df = manifest_df[manifest_df['PCC'].notna()]
+                else:
+                    filtered_df = manifest_df[manifest_df['PCC'] == pcc_code]
+                shipments = filtered_df['HWB'].nunique()
+                pieces = filtered_df['PIECES'].sum()
+                ratio = round(pieces / shipments, 2) if shipments > 0 else 0.0
+            else:
+                shipments = 0
+                pieces = 0
+                ratio = 0.0
+            sheet.append([label, shipments, pieces, ratio])
+
+        # Formatting
         for row in sheet.iter_rows(min_row=2, max_row=len(route_summary)+1, min_col=4, max_col=4):
             for cell in row:
                 cell.number_format = '0.0'
