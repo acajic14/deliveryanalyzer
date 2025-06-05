@@ -173,7 +173,7 @@ def process_manifest(file):
 
     street1 = new_df['CONSIGNEE_STREET1'] if 'CONSIGNEE_STREET1' in new_df.columns else pd.Series('', index=new_df.index)
     street2 = new_df['CONSIGNEE_STREET2'] if 'CONSIGNEE_STREET2' in new_df.columns else pd.Series('', index=new_df.index)
-    new_df['CONSIGNEE_STREET'] = street1.astype(str).fillna('') + ' ' + street2.astype(str).fillna('')
+    new_df['CONSIGNEE_STREET'] = street1.astype(str).fillna('') + ' ' + street2.astize(str).fillna('')
     new_df['CONSIGNEE_STREET'] = new_df['CONSIGNEE_STREET'].str.strip().replace('nan', '')
 
     new_df['HOUSE_NUMBER'] = new_df['CONSIGNEE_STREET'].apply(extract_house_number)
@@ -389,7 +389,7 @@ def generate_reports(
         axis=1
     )
 
-    # Add blank spacer and vehicle suggestion columns
+    # Add vehicle suggestion columns
     special_cases[''] = ''
     def get_vehicle_suggestion(row):
         conditions = [
@@ -402,8 +402,6 @@ def generate_reports(
         ]
         return "Truck" if any(conditions) else "Van"
     special_cases['Capacity Suggestion'] = special_cases.apply(get_vehicle_suggestion, axis=1)
-
-    # SORT BY ZIP CODE ASCENDING
     special_cases = special_cases.sort_values(by="CONSIGNEE_ZIP", ascending=True)
 
     matching_details = manifest_df[[
@@ -425,7 +423,6 @@ def generate_reports(
         route_summary.to_excel(writer, sheet_name='Summary', index=False)
         workbook = writer.book
         sheet = workbook['Summary']
-        # PCC stats and formatting as before...
         sheet.append([])
         sheet.append(["PCC Statistics:"])
         sheet.append(["Product", "Shipments", "Pieces", "Pieces/Shipment"])
@@ -459,7 +456,6 @@ def generate_reports(
         end_row = len(route_summary) + 1
         add_target_conditional_formatting(sheet, pred_target_col, start_row, end_row)
 
-    # Save special cases with Excel formatting for suggestion column
     with pd.ExcelWriter(special_cases_path, engine='openpyxl') as writer:
         special_cases.to_excel(writer, index=False)
         workbook = writer.book
@@ -478,7 +474,21 @@ def generate_reports(
     wth_mpcs_report = special_cases.sort_values('PIECES', ascending=False)
     wth_mpcs_report.to_excel(wth_mpcs_path, index=False)
 
-    # Priority Shipments Report (unchanged)
+    # MBX Report Generation
+    mbx_routes = {'MB1A', 'MB1B', 'MB1C', 'MB1X', 'MB2A', 'MB2B', 'MB2C', 'MB2X'}
+    mbx_report = manifest_df[
+        manifest_df['MATCHED_ROUTE'].isin(mbx_routes)
+    ][['HWB', 'CONSIGNEE_NAME', 'CONSIGNEE_ADDRESS', 'CONSIGNEE_ZIP', 'MATCHED_ROUTE']]
+    mbx_path = None
+    if not mbx_report.empty:
+        mbx_report = mbx_report.sort_values(
+            by=['MATCHED_ROUTE', 'CONSIGNEE_ZIP'],
+            ascending=[True, True]
+        )
+        mbx_path = f"{output_path}/MBX_details_{timestamp}.xlsx"
+        mbx_report.to_excel(mbx_path, index=False)
+
+    # Priority Shipments Report
     pcc_col = None
     for col in manifest_df.columns:
         if col.strip().upper() == 'PCC':
@@ -519,7 +529,7 @@ def generate_reports(
             priority_file = f"{output_path}/Priority_Shipments_{timestamp}.xlsx"
             wb.save(priority_file)
 
-    return timestamp, route_summary
+    return timestamp, route_summary, mbx_path
 
 def main():
     st.title("🚚 Delivery Route Analyzer")
@@ -542,7 +552,7 @@ def main():
         matched_manifest = match_address_to_route(manifest, street_city_routes, fallback_routes)
         output_path = "output"
         os.makedirs(output_path, exist_ok=True)
-        timestamp, route_summary = generate_reports(
+        timestamp, route_summary, mbx_path = generate_reports(
             matched_manifest, output_path,
             weight_thr, vol_weight_thr, pieces_thr,
             vehicle_weight_thr, vehicle_vol_thr,
@@ -579,6 +589,19 @@ def main():
                     st.download_button("Priority Shipments", f, f"Priority_Shipments_{timestamp}.xlsx")
             except FileNotFoundError:
                 st.write("Priority report unavailable (missing PCC data)")
+        st.subheader("Specialized Reports")
+        col6, col7 = st.columns(2)
+        with col6:
+            pass
+        with col7:
+            if mbx_path:
+                with open(mbx_path, "rb") as f:
+                    st.download_button(
+                        "MBX Details",
+                        f,
+                        f"MBX_details_{timestamp}.xlsx",
+                        help="Shipments for MB1/MB2 routes sorted by route and ZIP"
+                    )
         st.subheader("Preview of Processed Data")
         st.dataframe(matched_manifest.head(10))
 
