@@ -17,7 +17,6 @@ from openpyxl.styles import Font
 from openpyxl.utils.dataframe import dataframe_to_rows
 from openpyxl.formatting.rule import CellIsRule
 
-# --- Helper functions ---
 def normalize_diacritics(text):
     diacritic_map = {'č':'c', 'š':'s', 'ž':'z', 'Č':'c', 'Š':'s', 'Ž':'z'}
     return ''.join(diacritic_map.get(c, c) for c in text)
@@ -37,7 +36,10 @@ def clean_street_name(address):
     address = re.sub(r'([a-z])(\d)', r'\1 \2', address)
     address = re.sub(r'(\d)([a-z])', r'\1 \2', address)
     parts = address.split()
-    while parts and (re.match(r'^\d{4}$', parts[-1]) or parts[-1] in irrelevant_words):
+    while parts and (
+        re.match(r'^\d{4}$', parts[-1]) or
+        parts[-1] in irrelevant_words
+    ):
         parts.pop()
     cleaned_parts = []
     for part in parts:
@@ -270,6 +272,31 @@ def match_address_to_route(manifest_df, street_city_routes, fallback_routes):
 
     return manifest_df
 
+def fuzzy_group_names(df, group_col='CONSIGNEE_NAME_NORM', threshold=90):
+    grouped_data = []
+    processed = set()
+    for name in df[group_col].unique():
+        if name in processed:
+            continue
+        matches = process.extract(name, df[group_col], scorer=fuzz.ratio, score_cutoff=threshold)
+        matched_names = {match[0] for match in matches}
+        group_rows = df[df[group_col].isin(matched_names)]
+        non_null_names = group_rows['CONSIGNEE_NAME'].dropna()
+        if non_null_names.empty:
+            canonical_name = "Unknown Consignee"
+        else:
+            mode_result = non_null_names.mode()
+            canonical_name = mode_result.iloc[0] if not mode_result.empty else non_null_names.iloc[0]
+        grouped_data.append({
+            'MATCHED_ROUTE': group_rows['MATCHED_ROUTE'].iloc[0] if not group_rows.empty else '',
+            'CANONICAL_NAME': canonical_name,
+            'shipment_count': group_rows['shipment_count'].sum(),
+            'total_pieces': group_rows['total_pieces'].sum(),
+            'total_weight': group_rows['total_weight'].sum()
+        })
+        processed.update(matched_names)
+    return pd.DataFrame(grouped_data)
+
 def add_target_conditional_formatting(sheet, col_letter, start_row, end_row):
     red_font = Font(color='FF0000')
     yellow_font = Font(color='FFA500')
@@ -284,9 +311,11 @@ def add_target_conditional_formatting(sheet, col_letter, start_row, end_row):
         CellIsRule(operator='between', formula=['0', '5'], font=green_font))
 
 def generate_reports(
-    manifest_df, output_path, weight_thr=70, vol_weight_thr=150, pieces_thr=6,
-    vehicle_weight_thr=70, vehicle_vol_thr=150, vehicle_pieces_thr=12,
-    vehicle_kg_per_piece_thr=10, vehicle_van_max_pieces=20
+    manifest_df, output_path, 
+    weight_thr=70, vol_weight_thr=150, pieces_thr=6,
+    vehicle_weight_thr=70, vehicle_vol_thr=150, 
+    vehicle_pieces_thr=12, vehicle_kg_per_piece_thr=10,
+    vehicle_van_max_pieces=20
 ):
     hwb_aggregated = manifest_df.groupby(['HWB', 'MATCHED_ROUTE']).agg({
         'CONSIGNEE_NAME_NORM': 'first',
@@ -303,11 +332,17 @@ def generate_reports(
         unique_consignees=('CONSIGNEE_NAME_NORM', 'nunique'),
         total_weight=('WEIGHT', 'sum'),
         total_pieces=('PIECES', 'sum')
-    ).reset_index().rename(columns={'MATCHED_ROUTE': 'ROUTE'})
+    ).reset_index()
 
+    route_summary = route_summary.rename(columns={'MATCHED_ROUTE': 'ROUTE'})
     targets_df = load_targets('input/targets.xlsx')
     if not targets_df.empty:
-        route_summary = pd.merge(route_summary, targets_df, on='ROUTE', how='left')
+        route_summary = pd.merge(
+            route_summary,
+            targets_df,
+            on='ROUTE',
+            how='left'
+        )
     else:
         route_summary['Average PU stops'] = 0
         route_summary['Target stops'] = 0
@@ -315,11 +350,70 @@ def generate_reports(
     route_summary['total_weight'] = route_summary['total_weight'].round(1)
     route_summary['Predicted Stops'] = route_summary['unique_consignees'] + route_summary['Average PU stops']
     route_summary['Predicted - Target'] = route_summary['Predicted Stops'] - route_summary['Target stops']
-    for col in ['Average PU stops', 'Predicted Stops', 'Predicted - Target']:
-        route_summary[col] = route_summary[col].round(0).astype('Int64')
+    route_summary['Average PU stops'] = route_summary['Average PU stops'].round(0).astype('Int64')
+    route_summary['Predicted Stops'] = route_summary['Predicted Stops'].round(0).astype('Int64')
+    route_summary['Predicted - Target'] = route_summary['Predicted - Target'].round(0).astype('Int64')
+
     route_summary.insert(5, '', '')
-    route_summary = route_summary[['ROUTE', 'total_shipments', 'unique_consignees', 'total_weight', 'total_pieces', '',
-                                  'Average PU stops', 'Predicted Stops', 'Target stops', 'Predicted - Target']]
+    new_column_order = [
+        'ROUTE', 'total_shipments', 'unique_consignees',
+        'total_weight', 'total_pieces', '',
+        'Average PU stops', 'Predicted Stops', 'Target stops', 'Predicted - Target'
+    ]
+    route_summary = route_summary.reindex(columns=new_column_order)
+    route_summary = route_summary.rename(columns={'ROUTE': 'MATCHED_ROUTE'})
+
+    def get_trigger_reason(row):
+        reasons = []
+        if row['WEIGHT'] > weight_thr: reasons.append(f'Weight >{weight_thr}kg')
+        if row['VOLUMETRIC_WEIGHT'] > vol_weight_thr: reasons.append(f'Volumetric >{vol_weight_thr}kg')
+        if row['PIECES'] > pieces_thr: reasons.append(f'Pieces >{pieces_thr}')
+        return ', '.join(reasons) if reasons else None
+
+    special_cases = manifest_df[
+        (manifest_df['WEIGHT'] > weight_thr) |
+        (manifest_df['VOLUMETRIC_WEIGHT'] > vol_weight_thr) |
+        (manifest_df['PIECES'] > pieces_thr)
+    ].copy()
+    special_cases = special_cases.groupby('HWB').agg({
+        'CONSIGNEE_NAME': 'first',
+        'CONSIGNEE_ZIP': 'first',
+        'MATCHED_ROUTE': 'first',
+        'WEIGHT': 'max',
+        'VOLUMETRIC_WEIGHT': 'max',
+        'PIECES': 'first'
+    }).reset_index()
+    special_cases['TRIGGER_REASON'] = special_cases.apply(get_trigger_reason, axis=1)
+    special_cases['WEIGHT_PER_PIECE'] = special_cases.apply(
+        lambda x: round(x['WEIGHT']/x['PIECES'], 2) if x['PIECES'] > pieces_thr else None,
+        axis=1
+    )
+
+    # Add blank spacer and vehicle suggestion columns
+    special_cases[''] = ''
+    def get_vehicle_suggestion(row):
+        conditions = [
+            row['WEIGHT'] > vehicle_weight_thr,
+            row['VOLUMETRIC_WEIGHT'] > vehicle_vol_thr,
+            row['PIECES'] > vehicle_pieces_thr,
+            (not pd.isna(row['WEIGHT_PER_PIECE'])) and 
+            (row['WEIGHT_PER_PIECE'] > vehicle_kg_per_piece_thr) and 
+            (row['PIECES'] > vehicle_van_max_pieces)
+        ]
+        return "Truck" if any(conditions) else "Van"
+    special_cases['Capacity Suggestion'] = special_cases.apply(get_vehicle_suggestion, axis=1)
+
+    # SORT BY ZIP CODE ASCENDING
+    special_cases = special_cases.sort_values(by="CONSIGNEE_ZIP", ascending=True)
+
+    matching_details = manifest_df[[
+        'HWB', 'CONSIGNEE_NAME', 'CONSIGNEE_ZIP', 'CONSIGNEE_ADDRESS',
+        'MATCHED_ROUTE', 'MATCH_METHOD'
+    ]].copy()
+    matching_details['MATCHED_ROUTE'] = matching_details['MATCHED_ROUTE'].fillna('UNMATCHED')
+    matching_details['MATCH_METHOD'] = matching_details['MATCH_METHOD'].fillna('UNMATCHED')
+    matching_details.rename(columns={'MATCH_METHOD': 'MATCHING_METHOD'}, inplace=True)
+
     timestamp = datetime.now().strftime("%Y%m%d_%H%M")
     os.makedirs(output_path, exist_ok=True)
     summary_path = f"{output_path}/route_summary_{timestamp}.xlsx"
@@ -329,72 +423,103 @@ def generate_reports(
 
     with pd.ExcelWriter(summary_path, engine='openpyxl') as writer:
         route_summary.to_excel(writer, sheet_name='Summary', index=False)
-        sheet = writer.sheets['Summary']
-        current_row = sheet.max_row + 2
-        sheet.cell(row=current_row, column=1, value="PCC Statistics:")
-        current_row += 1
-        sheet.cell(row=current_row, column=1, value="Product")
-        sheet.cell(row=current_row, column=2, value="Shipments")
-        sheet.cell(row=current_row, column=3, value="Pieces")
-        sheet.cell(row=current_row, column=4, value="Pieces/Shipment")
-        current_row += 1
+        workbook = writer.book
+        sheet = workbook['Summary']
+        # PCC stats and formatting as before...
+        sheet.append([])
+        sheet.append(["PCC Statistics:"])
+        sheet.append(["Product", "Shipments", "Pieces", "Pieces/Shipment"])
         pcc_categories = [
-            ('WPX', 'WPX'), ('TDY', 'TDY'), ('ESI', 'ESI'),
-            ('ECX', 'ECX'), ('ESU', 'ESU'), ('ALL', 'All volume')
+            ('WPX', 'WPX'),
+            ('TDY', 'TDY'),
+            ('ESI', 'ESI'),
+            ('ECX', 'ECX'),
+            ('ESU', 'ESU'),
+            ('ALL', 'All volume')
         ]
         for pcc_code, label in pcc_categories:
             if 'PCC' in manifest_df.columns:
-                filtered_df = manifest_df[manifest_df['PCC'] == pcc_code] if pcc_code != 'ALL' else manifest_df[manifest_df['PCC'].notna()]
+                if pcc_code == 'ALL':
+                    filtered_df = manifest_df[manifest_df['PCC'].notna()]
+                else:
+                    filtered_df = manifest_df[manifest_df['PCC'] == pcc_code]
                 shipments = filtered_df['HWB'].nunique()
                 pieces = filtered_df['PIECES'].sum()
                 ratio = round(pieces / shipments, 2) if shipments > 0 else 0.0
             else:
-                shipments, pieces, ratio = 0, 0, 0.0
-            sheet.cell(row=current_row, column=1, value=label)
-            sheet.cell(row=current_row, column=2, value=shipments)
-            sheet.cell(row=current_row, column=3, value=pieces)
-            sheet.cell(row=current_row, column=4, value=ratio)
-            current_row += 1
+                shipments = 0
+                pieces = 0
+                ratio = 0.0
+            sheet.append([label, shipments, pieces, ratio])
+        for row in sheet.iter_rows(min_row=2, max_row=len(route_summary)+1, min_col=4, max_col=4):
+            for cell in row:
+                cell.number_format = '0.0'
+        pred_target_col = 'J'
+        start_row = 2
+        end_row = len(route_summary) + 1
+        add_target_conditional_formatting(sheet, pred_target_col, start_row, end_row)
 
-        # ZIP Code Statistics section
-        zip_stats = manifest_df.groupby('CONSIGNEE_ZIP').agg(
-            total_shipments=('HWB', 'nunique'),
-            unique_consignees=('CONSIGNEE_NAME_NORM', 'nunique')
-        ).reset_index().sort_values('CONSIGNEE_ZIP', ascending=True)
-        current_row += 2
-        sheet.cell(row=current_row, column=1, value="ZIP Code Statistics:")
-        current_row += 1
-        sheet.cell(row=current_row, column=1, value="ZIP Code")
-        sheet.cell(row=current_row, column=2, value="Shipments")
-        sheet.cell(row=current_row, column=3, value="Unique Consignees")
-        current_row += 1
-        for _, row in zip_stats.iterrows():
-            sheet.cell(row=current_row, column=1, value=row['CONSIGNEE_ZIP'])
-            sheet.cell(row=current_row, column=2, value=row['total_shipments'])
-            sheet.cell(row=current_row, column=3, value=row['unique_consignees'])
-            current_row += 1
+    # Save special cases with Excel formatting for suggestion column
+    with pd.ExcelWriter(special_cases_path, engine='openpyxl') as writer:
+        special_cases.to_excel(writer, index=False)
+        workbook = writer.book
+        sheet = workbook.active
+        truck_font = Font(color='FF0000', bold=True)
+        van_font = Font(color='000000', bold=True)
+        suggestion_col = special_cases.columns.get_loc('Capacity Suggestion') + 1
+        for row_idx in range(2, len(special_cases)+2):
+            cell = sheet.cell(row=row_idx, column=suggestion_col)
+            if cell.value == "Truck":
+                cell.font = truck_font
+            elif cell.value == "Van":
+                cell.font = van_font
 
-        add_target_conditional_formatting(sheet, 'J', 2, len(route_summary)+1)
-
-    # Save special_cases to Excel so download button works
-    special_cases = manifest_df[
-        (manifest_df['WEIGHT'] > weight_thr) |
-        (manifest_df['VOLUMETRIC_WEIGHT'] > vol_weight_thr) |
-        (manifest_df['PIECES'] > pieces_thr)
-    ].copy()
-    special_cases.to_excel(special_cases_path, index=False)
-
-    # Save matching_details to Excel so download button works
-    matching_details = manifest_df[[
-        'HWB', 'CONSIGNEE_NAME', 'CONSIGNEE_ZIP', 'CONSIGNEE_ADDRESS',
-        'MATCHED_ROUTE', 'MATCH_METHOD'
-    ]].copy()
     matching_details.to_excel(matching_details_path, index=False)
+    wth_mpcs_report = special_cases.sort_values('PIECES', ascending=False)
+    wth_mpcs_report.to_excel(wth_mpcs_path, index=False)
 
-    # Save WTH_MPCS_Report to Excel so download button works
-    special_cases.sort_values('PIECES', ascending=False).to_excel(wth_mpcs_path, index=False)
+    # Priority Shipments Report (unchanged)
+    pcc_col = None
+    for col in manifest_df.columns:
+        if col.strip().upper() == 'PCC':
+            pcc_col = col
+            break
+    if pcc_col:
+        manifest_df[pcc_col] = manifest_df[pcc_col].astype(str).str.strip().str.upper()
+        priority_codes = ['CMX', 'WMX', 'TDT', 'TDY']
+        priority_pccs = manifest_df[manifest_df[pcc_col].isin(priority_codes)].copy()
+        if not priority_pccs.empty:
+            group1 = priority_pccs[priority_pccs[pcc_col].isin(['CMX', 'WMX'])].sort_values(
+                by=['CONSIGNEE_ZIP', 'MATCHED_ROUTE'], ascending=[True, True]
+            )
+            group2 = priority_pccs[priority_pccs[pcc_col].isin(['TDT', 'TDY'])].sort_values(
+                by=['CONSIGNEE_ZIP', 'MATCHED_ROUTE'], ascending=[True, True]
+            )
+            wb = Workbook()
+            ws = wb.active
+            ws.title = "Priority Shipments"
+            cols = ['MATCHED_ROUTE', 'HWB', 'CONSIGNEE_NAME', 'CONSIGNEE_ZIP', pcc_col, 'WEIGHT', 'VOLUMETRIC_WEIGHT', 'PIECES']
+            header_font = Font(bold=True)
+            ws['A1'] = "CMX/WMX Priority Shipments"
+            ws['A1'].font = header_font
+            ws.append([])
+            for col_idx, col in enumerate(cols, 1):
+                ws.cell(row=3, column=col_idx, value=col).font = header_font
+            for row_idx, row in enumerate(dataframe_to_rows(group1[cols], index=False, header=False), 4):
+                for col_idx, value in enumerate(row, 1):
+                    ws.cell(row=row_idx, column=col_idx, value=value)
+            last_row = ws.max_row + 3
+            ws.cell(row=last_row, column=1, value="TDT/TDY Priority Shipments").font = header_font
+            ws.append([])
+            for col_idx, col in enumerate(cols, 1):
+                ws.cell(row=last_row + 2, column=col_idx, value=col).font = header_font
+            for row_idx, row in enumerate(dataframe_to_rows(group2[cols], index=False, header=False), last_row + 3):
+                for col_idx, value in enumerate(row, 1):
+                    ws.cell(row=row_idx, column=col_idx, value=value)
+            priority_file = f"{output_path}/Priority_Shipments_{timestamp}.xlsx"
+            wb.save(priority_file)
 
-    return timestamp, route_summary, None
+    return timestamp, route_summary
 
 def main():
     st.title("🚚 Delivery Route Analyzer")
@@ -417,7 +542,7 @@ def main():
         matched_manifest = match_address_to_route(manifest, street_city_routes, fallback_routes)
         output_path = "output"
         os.makedirs(output_path, exist_ok=True)
-        timestamp, route_summary, _ = generate_reports(
+        timestamp, route_summary = generate_reports(
             matched_manifest, output_path,
             weight_thr, vol_weight_thr, pieces_thr,
             vehicle_weight_thr, vehicle_vol_thr,
