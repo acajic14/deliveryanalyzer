@@ -176,11 +176,14 @@ def match_address_to_route(manifest_df, street_city_routes, fallback_routes):
     special_zips = {'2000', '3000', '4000', '5000', '6000', '8000'}
 
     for idx, row in manifest_df.iterrows():
-        # Direct customer matching rule for Elrad Electronics
-        if ('elrad electronics' in str(row['CONSIGNEE_NAME']).lower() and 
-            'ljutomerska cesta 47' in str(row['CONSIGNEE_STREET']).lower()):
+        # Enhanced direct customer matching rule for Elrad Electronics
+        consignee_name = str(row['CONSIGNEE_NAME']).lower()
+        consignee_street = str(row['CONSIGNEE_STREET']).lower()
+        
+        if ('elrad' in consignee_name and 'electronics' in consignee_name and 
+            ('ljutomerska' in consignee_street and '47' in consignee_street)):
             manifest_df.at[idx, 'MATCHED_ROUTE'] = 'MB1B'
-            manifest_df.at[idx, 'MATCH_METHOD'] = 'Direct Rule'
+            manifest_df.at[idx, 'MATCH_METHOD'] = 'Direct Rule - Elrad'
             manifest_df.at[idx, 'MATCH_SCORE'] = 100.0
             continue
         
