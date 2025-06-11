@@ -254,7 +254,7 @@ def auto_adjust_column_width(worksheet):
         worksheet.column_dimensions[column_letter].width = adjusted_width
 
 def create_specialized_report(manifest_df, route_prefixes, report_name, output_path, timestamp):
-    """Create specialized report for specific route prefixes"""
+    """Create specialized report for specific route prefixes with MATCHED_ROUTE first"""
     # Filter data for specified route prefixes
     filtered_data = manifest_df[
         manifest_df['MATCHED_ROUTE'].str.startswith(tuple(route_prefixes), na=False)
@@ -263,8 +263,8 @@ def create_specialized_report(manifest_df, route_prefixes, report_name, output_p
     report_path = f"{output_path}/{report_name}_details_{timestamp}.xlsx"
     
     if not filtered_data.empty:
-        # Select and sort data
-        report_data = filtered_data[['HWB', 'CONSIGNEE_NAME', 'CONSIGNEE_ADDRESS', 'CONSIGNEE_ZIP', 'MATCHED_ROUTE']].copy()
+        # Select and reorder columns with MATCHED_ROUTE first
+        report_data = filtered_data[['MATCHED_ROUTE', 'HWB', 'CONSIGNEE_NAME', 'CONSIGNEE_ADDRESS', 'CONSIGNEE_ZIP']].copy()
         report_data = report_data.sort_values(by=['MATCHED_ROUTE', 'CONSIGNEE_ZIP'], ascending=[True, True])
         
         # Create Excel with auto-adjusted columns
@@ -272,8 +272,8 @@ def create_specialized_report(manifest_df, route_prefixes, report_name, output_p
             report_data.to_excel(writer, index=False)
             auto_adjust_column_width(writer.sheets['Sheet1'])
     else:
-        # Create empty file
-        pd.DataFrame(columns=['HWB', 'CONSIGNEE_NAME', 'CONSIGNEE_ADDRESS', 'CONSIGNEE_ZIP', 'MATCHED_ROUTE']).to_excel(report_path, index=False)
+        # Create empty file with MATCHED_ROUTE first
+        pd.DataFrame(columns=['MATCHED_ROUTE', 'HWB', 'CONSIGNEE_NAME', 'CONSIGNEE_ADDRESS', 'CONSIGNEE_ZIP']).to_excel(report_path, index=False)
     
     return report_path
 
@@ -390,7 +390,7 @@ def generate_reports(
 
         add_target_conditional_formatting(sheet, 'J', 2, len(route_summary)+1)
 
-        # Add route prefix sheets
+        # Add route prefix sheets with MATCHED_ROUTE first
         route_prefixes = ['KR', 'LJ', 'KP', 'NG', 'NM', 'CE', 'MB']
         for prefix in route_prefixes:
             prefix_data = manifest_df[
@@ -398,6 +398,7 @@ def generate_reports(
             ].copy()
             
             if not prefix_data.empty:
+                # Reorder columns with MATCHED_ROUTE first
                 sheet_data = prefix_data[[
                     'MATCHED_ROUTE', 'CONSIGNEE_NAME', 'CONSIGNEE_ADDRESS', 
                     'CONSIGNEE_CITY', 'CONSIGNEE_ZIP', 'HWB', 'PIECES'
@@ -424,14 +425,11 @@ def generate_reports(
         # Auto-adjust main summary sheet
         auto_adjust_column_width(sheet)
 
-    # Generate specialized reports
+    # Generate specialized reports with MATCHED_ROUTE first
     specialized_reports = {}
     
-    # MBX Report (existing)
-    mbx_path = create_specialized_report(manifest_df, ['MB1', 'MB2'], 'MBX', output_path, timestamp)
-    specialized_reports['MBX'] = mbx_path
-    
-    # New specialized reports
+    # All specialized reports now have MATCHED_ROUTE as column A
+    specialized_reports['MBX'] = create_specialized_report(manifest_df, ['MB1', 'MB2'], 'MBX', output_path, timestamp)
     specialized_reports['KRA'] = create_specialized_report(manifest_df, ['KR1', 'KR2'], 'KRA', output_path, timestamp)
     specialized_reports['LJU'] = create_specialized_report(manifest_df, ['LJ1', 'LJ2'], 'LJU', output_path, timestamp)
     specialized_reports['NMO'] = create_specialized_report(manifest_df, ['NM1', 'NM2'], 'NMO', output_path, timestamp)
