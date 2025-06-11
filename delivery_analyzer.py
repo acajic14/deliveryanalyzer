@@ -3,7 +3,7 @@ import os
 
 if getattr(sys, 'frozen', False):
     sys.argv = [sys.argv[0], "run"]
-    os.environ['STREAMLIT_RUNNING_VIA_PYINSTALLER'] = 'false'
+    os.environ['STREAMLIT_RUNNING_VIA_PYINSTALLER'] = 'true'
     os.environ['STREAMLIT_SERVER_ENABLE_STATIC_SERVE'] = 'true'
     os.environ['STREAMLIT_SERVER_ENABLE_XSRF_PROTECTION'] = 'false'
 
