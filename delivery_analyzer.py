@@ -239,6 +239,44 @@ def add_target_conditional_formatting(sheet, col_letter, start_row, end_row):
     sheet.conditional_formatting.add(f'{col_letter}{start_row}:{col_letter}{end_row}',
         CellIsRule(operator='between', formula=['0', '5'], font=green_font))
 
+def auto_adjust_column_width(worksheet):
+    """Auto-adjust column widths for better readability"""
+    for column in worksheet.columns:
+        max_length = 0
+        column_letter = column[0].column_letter
+        for cell in column:
+            try:
+                if len(str(cell.value)) > max_length:
+                    max_length = len(str(cell.value))
+            except:
+                pass
+        adjusted_width = min(max_length + 2, 50)  # Cap at 50 characters
+        worksheet.column_dimensions[column_letter].width = adjusted_width
+
+def create_specialized_report(manifest_df, route_prefixes, report_name, output_path, timestamp):
+    """Create specialized report for specific route prefixes"""
+    # Filter data for specified route prefixes
+    filtered_data = manifest_df[
+        manifest_df['MATCHED_ROUTE'].str.startswith(tuple(route_prefixes), na=False)
+    ].copy()
+    
+    report_path = f"{output_path}/{report_name}_details_{timestamp}.xlsx"
+    
+    if not filtered_data.empty:
+        # Select and sort data
+        report_data = filtered_data[['HWB', 'CONSIGNEE_NAME', 'CONSIGNEE_ADDRESS', 'CONSIGNEE_ZIP', 'MATCHED_ROUTE']].copy()
+        report_data = report_data.sort_values(by=['MATCHED_ROUTE', 'CONSIGNEE_ZIP'], ascending=[True, True])
+        
+        # Create Excel with auto-adjusted columns
+        with pd.ExcelWriter(report_path, engine='openpyxl') as writer:
+            report_data.to_excel(writer, index=False)
+            auto_adjust_column_width(writer.sheets['Sheet1'])
+    else:
+        # Create empty file
+        pd.DataFrame(columns=['HWB', 'CONSIGNEE_NAME', 'CONSIGNEE_ADDRESS', 'CONSIGNEE_ZIP', 'MATCHED_ROUTE']).to_excel(report_path, index=False)
+    
+    return report_path
+
 def generate_reports(
     manifest_df, output_path, weight_thr=70, vol_weight_thr=150, pieces_thr=6,
     vehicle_weight_thr=70, vehicle_vol_thr=150, vehicle_pieces_thr=12,
@@ -285,7 +323,6 @@ def generate_reports(
     matching_details_path = f"{output_path}/matching_details_{timestamp}.xlsx"
     wth_mpcs_path = f"{output_path}/WTH_MPCS_Report_{timestamp}.xlsx"
     priority_path = f"{output_path}/Priority_Shipments_{timestamp}.xlsx"
-    mbx_path = f"{output_path}/MBX_details_{timestamp}.xlsx"
 
     # Route Summary with ZIP Statistics and Multiple Sheets
     with pd.ExcelWriter(summary_path, engine='openpyxl') as writer:
@@ -356,40 +393,54 @@ def generate_reports(
         # Add route prefix sheets
         route_prefixes = ['KR', 'LJ', 'KP', 'NG', 'NM', 'CE', 'MB']
         for prefix in route_prefixes:
-            # Filter data for this prefix - handle NaN values properly
             prefix_data = manifest_df[
                 manifest_df['MATCHED_ROUTE'].str.startswith(prefix, na=False)
             ].copy()
             
             if not prefix_data.empty:
-                # Select and rename columns
                 sheet_data = prefix_data[[
                     'MATCHED_ROUTE', 'CONSIGNEE_NAME', 'CONSIGNEE_ADDRESS', 
                     'CONSIGNEE_CITY', 'CONSIGNEE_ZIP', 'HWB', 'PIECES'
                 ]].copy()
                 
-                # Rename columns for clarity
                 sheet_data.columns = [
                     'MATCHED ROUTE', 'CONSIGNEE', 'CONSIGNEE ADDRESS', 
                     'CITY', 'ZIP', 'AWB', 'PIECES'
                 ]
                 
-                # Sort by route then ZIP
                 sheet_data = sheet_data.sort_values(['MATCHED ROUTE', 'ZIP'])
                 
-                # Create the sheet
                 try:
                     sheet_data.to_excel(writer, sheet_name=prefix, index=False)
+                    auto_adjust_column_width(writer.sheets[prefix])
                 except Exception as e:
                     st.warning(f"Could not create sheet {prefix}: {str(e)}")
             else:
-                # Create empty sheet if no data
                 pd.DataFrame(columns=[
                     'MATCHED ROUTE', 'CONSIGNEE', 'CONSIGNEE ADDRESS', 
                     'CITY', 'ZIP', 'AWB', 'PIECES'
                 ]).to_excel(writer, sheet_name=prefix, index=False)
 
-    # Special Cases (with all original functionality)
+        # Auto-adjust main summary sheet
+        auto_adjust_column_width(sheet)
+
+    # Generate specialized reports
+    specialized_reports = {}
+    
+    # MBX Report (existing)
+    mbx_path = create_specialized_report(manifest_df, ['MB1', 'MB2'], 'MBX', output_path, timestamp)
+    specialized_reports['MBX'] = mbx_path
+    
+    # New specialized reports
+    specialized_reports['KRA'] = create_specialized_report(manifest_df, ['KR1', 'KR2'], 'KRA', output_path, timestamp)
+    specialized_reports['LJU'] = create_specialized_report(manifest_df, ['LJ1', 'LJ2'], 'LJU', output_path, timestamp)
+    specialized_reports['NMO'] = create_specialized_report(manifest_df, ['NM1', 'NM2'], 'NMO', output_path, timestamp)
+    specialized_reports['CEJ'] = create_specialized_report(manifest_df, ['CE1', 'CE2'], 'CEJ', output_path, timestamp)
+    specialized_reports['NGR'] = create_specialized_report(manifest_df, ['NG1', 'NG2'], 'NGR', output_path, timestamp)
+    specialized_reports['NGX'] = create_specialized_report(manifest_df, ['NGX'], 'NGX', output_path, timestamp)
+    specialized_reports['KOP'] = create_specialized_report(manifest_df, ['KP1'], 'KOP', output_path, timestamp)
+
+    # Special Cases (with auto-adjusted columns)
     special_cases = manifest_df[
         (manifest_df['WEIGHT'] > weight_thr) |
         (manifest_df['VOLUMETRIC_WEIGHT'] > vol_weight_thr) |
@@ -445,21 +496,28 @@ def generate_reports(
                     cell.font = truck_font
                 elif cell.value == "Van":
                     cell.font = van_font
+            auto_adjust_column_width(sheet)
     else:
         pd.DataFrame().to_excel(special_cases_path, index=False)
 
-    # Matching Details
+    # Matching Details (with auto-adjusted columns)
     matching_details = manifest_df[['HWB', 'CONSIGNEE_NAME', 'CONSIGNEE_ZIP', 'CONSIGNEE_ADDRESS', 'MATCHED_ROUTE', 'MATCH_METHOD']].copy()
     matching_details['MATCHED_ROUTE'] = matching_details['MATCHED_ROUTE'].fillna('UNMATCHED')
     matching_details['MATCH_METHOD'] = matching_details['MATCH_METHOD'].fillna('UNMATCHED')
     matching_details.rename(columns={'MATCH_METHOD': 'MATCHING_METHOD'}, inplace=True)
-    matching_details.to_excel(matching_details_path, index=False)
+    
+    with pd.ExcelWriter(matching_details_path, engine='openpyxl') as writer:
+        matching_details.to_excel(writer, index=False)
+        auto_adjust_column_width(writer.sheets['Sheet1'])
 
-    # WTH MPCS Report
+    # WTH MPCS Report (with auto-adjusted columns)
     wth_mpcs_report = special_cases.sort_values('PIECES', ascending=False) if not special_cases.empty else pd.DataFrame()
-    wth_mpcs_report.to_excel(wth_mpcs_path, index=False)
+    with pd.ExcelWriter(wth_mpcs_path, engine='openpyxl') as writer:
+        wth_mpcs_report.to_excel(writer, index=False)
+        if not wth_mpcs_report.empty:
+            auto_adjust_column_width(writer.sheets['Sheet1'])
 
-    # Priority Shipments
+    # Priority Shipments (with auto-adjusted columns)
     if 'PCC' in manifest_df.columns:
         manifest_df['PCC'] = manifest_df['PCC'].astype(str).str.strip().str.upper()
         priority_codes = ['CMX', 'WMX', 'TDT', 'TDY']
@@ -491,22 +549,14 @@ def generate_reports(
             for row_idx, row in enumerate(dataframe_to_rows(group2[cols], index=False, header=False), last_row + 3):
                 for col_idx, value in enumerate(row, 1):
                     ws.cell(row=row_idx, column=col_idx, value=value)
+            auto_adjust_column_width(ws)
             wb.save(priority_path)
         else:
             pd.DataFrame().to_excel(priority_path, index=False)
     else:
         pd.DataFrame().to_excel(priority_path, index=False)
 
-    # MBX Report
-    mbx_routes = {'MB1A', 'MB1B', 'MB1C', 'MB1X', 'MB2A', 'MB2B', 'MB2C', 'MB2X'}
-    mbx_report = manifest_df[manifest_df['MATCHED_ROUTE'].isin(mbx_routes)][['HWB', 'CONSIGNEE_NAME', 'CONSIGNEE_ADDRESS', 'CONSIGNEE_ZIP', 'MATCHED_ROUTE']]
-    if not mbx_report.empty:
-        mbx_report = mbx_report.sort_values(by=['MATCHED_ROUTE', 'CONSIGNEE_ZIP'], ascending=[True, True])
-        mbx_report.to_excel(mbx_path, index=False)
-    else:
-        pd.DataFrame().to_excel(mbx_path, index=False)
-
-    return timestamp, route_summary, mbx_path
+    return timestamp, route_summary, specialized_reports
 
 def main():
     st.title("🚚 Delivery Route Analyzer")
@@ -533,7 +583,7 @@ def main():
         
         output_path = "output"
         os.makedirs(output_path, exist_ok=True)
-        timestamp, route_summary, mbx_path = generate_reports(
+        timestamp, route_summary, specialized_reports = generate_reports(
             matched_manifest, output_path,
             weight_thr, vol_weight_thr, pieces_thr,
             vehicle_weight_thr, vehicle_vol_thr,
@@ -573,18 +623,74 @@ def main():
                 st.download_button("Priority Shipments", f, f"Priority_Shipments_{timestamp}.xlsx")
 
         st.subheader("Specialized Reports")
-        col6, col7 = st.columns(2)
-        with col7:
-            if mbx_path and os.path.exists(mbx_path):
-                with open(mbx_path, "rb") as f:
-                    st.download_button(
-                        "MBX Details",
-                        f,
-                        f"MBX_details_{timestamp}.xlsx",
-                        help="Shipments for MB1/MB2 routes sorted by route and ZIP"
-                    )
+        
+        # First row of specialized reports
+        col6, col7, col8, col9 = st.columns(4)
+        with col6:
+            if os.path.exists(specialized_reports['MBX']):
+                with open(specialized_reports['MBX'], "rb") as f:
+                    st.download_button("MBX Details", f, f"MBX_details_{timestamp}.xlsx",
+                                      help="MB1 and MB2 routes")
             else:
-                st.write("No MBX shipments found")
+                st.write("No MBX shipments")
+        
+        with col7:
+            if os.path.exists(specialized_reports['KRA']):
+                with open(specialized_reports['KRA'], "rb") as f:
+                    st.download_button("KRA Details", f, f"KRA_details_{timestamp}.xlsx",
+                                      help="KR1 and KR2 routes")
+            else:
+                st.write("No KRA shipments")
+        
+        with col8:
+            if os.path.exists(specialized_reports['LJU']):
+                with open(specialized_reports['LJU'], "rb") as f:
+                    st.download_button("LJU Details", f, f"LJU_details_{timestamp}.xlsx",
+                                      help="LJ1 and LJ2 routes")
+            else:
+                st.write("No LJU shipments")
+        
+        with col9:
+            if os.path.exists(specialized_reports['NMO']):
+                with open(specialized_reports['NMO'], "rb") as f:
+                    st.download_button("NMO Details", f, f"NMO_details_{timestamp}.xlsx",
+                                      help="NM1 and NM2 routes")
+            else:
+                st.write("No NMO shipments")
+        
+        # Second row of specialized reports
+        col10, col11, col12, col13 = st.columns(4)
+        with col10:
+            if os.path.exists(specialized_reports['CEJ']):
+                with open(specialized_reports['CEJ'], "rb") as f:
+                    st.download_button("CEJ Details", f, f"CEJ_details_{timestamp}.xlsx",
+                                      help="CE1 and CE2 routes")
+            else:
+                st.write("No CEJ shipments")
+        
+        with col11:
+            if os.path.exists(specialized_reports['NGR']):
+                with open(specialized_reports['NGR'], "rb") as f:
+                    st.download_button("NGR Details", f, f"NGR_details_{timestamp}.xlsx",
+                                      help="NG1 and NG2 routes")
+            else:
+                st.write("No NGR shipments")
+        
+        with col12:
+            if os.path.exists(specialized_reports['NGX']):
+                with open(specialized_reports['NGX'], "rb") as f:
+                    st.download_button("NGX Details", f, f"NGX_details_{timestamp}.xlsx",
+                                      help="NGX routes")
+            else:
+                st.write("No NGX shipments")
+        
+        with col13:
+            if os.path.exists(specialized_reports['KOP']):
+                with open(specialized_reports['KOP'], "rb") as f:
+                    st.download_button("KOP Details", f, f"KOP_details_{timestamp}.xlsx",
+                                      help="KP1 routes")
+            else:
+                st.write("No KOP shipments")
 
         st.subheader("Preview of Processed Data")
         st.dataframe(matched_manifest.head(10))
