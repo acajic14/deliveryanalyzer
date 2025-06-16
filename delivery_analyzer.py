@@ -22,7 +22,7 @@ from email.mime.base import MIMEBase
 from email.mime.text import MIMEText
 from email import encoders
 
-# --- All your existing helper functions (unchanged) ---
+# --- Helper functions ---
 def normalize_diacritics(text):
     diacritic_map = {'č':'c', 'š':'s', 'ž':'z', 'Č':'C', 'Š':'S', 'Ž':'Z'}
     return ''.join(diacritic_map.get(c, c) for c in text)
@@ -220,16 +220,9 @@ Delivery Route Analyzer System
     
     return results
 
-def process_manifest(file):
-    try:
-        if file.name.endswith(('.xlsx', '.xls')):
-            df = pd.read_excel(file)
-        else:
-            df = pd.read_csv(file, delimiter=',', quotechar='"', engine='python')
-    except Exception as e:
-        st.error(f"Error reading file: {str(e)}")
-        return pd.DataFrame()
-
+# --- MULTIPLE FILE PROCESSING ---
+def apply_column_mapping(df):
+    """Apply column mapping logic to a single dataframe"""
     column_map = {
         'HWB': 'HWB',
         '# Pcs\\Tot Pcs': 'PIECES',
@@ -277,7 +270,87 @@ def process_manifest(file):
     new_df['MATCH_METHOD'] = None
     new_df['CONSIGNEE_ADDRESS'] = new_df['CONSIGNEE_STREET'].apply(clean_nan_from_address)
     new_df['CONSIGNEE_NAME_NORM'] = new_df['CONSIGNEE_NAME'].apply(normalize_consignee_name)
+    
     return new_df
+
+def process_multiple_manifests(uploaded_files):
+    """Process and merge multiple manifest files with header handling"""
+    all_dataframes = []
+    
+    for i, file in enumerate(uploaded_files):
+        st.write(f"Processing file {i+1}/{len(uploaded_files)}: {file.name}")
+        
+        try:
+            # Read file with proper header handling
+            if file.name.endswith(('.xlsx', '.xls')):
+                df = pd.read_excel(file, header=0)
+            else:
+                df = pd.read_csv(file, delimiter=',', quotechar='"', 
+                               engine='python', header=0, dtype=str)
+            
+            # Apply column mapping
+            df = apply_column_mapping(df)
+            
+            if not df.empty:
+                # Remove any rows that might be headers
+                df = df[df['HWB'] != 'HWB']
+                df = df[df['HWB'].notna()]
+                df = df[df['HWB'] != '']
+                
+                # Add source file info
+                df['SOURCE_FILE'] = file.name
+                df['FILE_ORDER'] = i + 1
+                all_dataframes.append(df)
+                st.success(f"✅ {file.name}: {len(df)} rows processed")
+            else:
+                st.warning(f"⚠️ {file.name}: No data found")
+                
+        except Exception as e:
+            st.error(f"❌ {file.name}: Error - {str(e)}")
+            continue
+    
+    if not all_dataframes:
+        st.error("No valid data found in any uploaded files")
+        return pd.DataFrame()
+    
+    # Merge all dataframes
+    merged_df = pd.concat(all_dataframes, ignore_index=True)
+    
+    # Final cleanup
+    merged_df = merged_df[merged_df['HWB'] != 'HWB']
+    merged_df = merged_df[merged_df['CONSIGNEE_NAME'] != 'Cnee Nm']
+    merged_df = merged_df.reset_index(drop=True)
+    
+    # Show merge summary
+    st.success(f"🎉 **Merge Complete!**")
+    st.write(f"- **Total rows:** {len(merged_df)}")
+    st.write(f"- **Files merged:** {len(all_dataframes)}")
+    st.write(f"- **Unique HWBs:** {merged_df['HWB'].nunique()}")
+    
+    # Show file breakdown
+    with st.expander("📊 File Breakdown"):
+        file_summary = merged_df.groupby('SOURCE_FILE').agg({
+            'HWB': 'count',
+            'WEIGHT': 'sum',
+            'PIECES': 'sum'
+        }).round(1)
+        file_summary.columns = ['Rows', 'Total Weight', 'Total Pieces']
+        st.dataframe(file_summary)
+    
+    return merged_df
+
+def process_manifest(file):
+    """Process single manifest file (legacy function for single file upload)"""
+    try:
+        if file.name.endswith(('.xlsx', '.xls')):
+            df = pd.read_excel(file)
+        else:
+            df = pd.read_csv(file, delimiter=',', quotechar='"', engine='python', dtype=str)
+    except Exception as e:
+        st.error(f"Error reading file: {str(e)}")
+        return pd.DataFrame()
+
+    return apply_column_mapping(df)
 
 def match_address_to_route(manifest_df, street_city_routes, fallback_routes):
     manifest_df['MATCHED_ROUTE'] = None
@@ -676,14 +749,49 @@ def main():
     vehicle_kg_per_piece_thr = st.sidebar.number_input("Max kg/piece for Van", value=10)
     vehicle_van_max_pieces = st.sidebar.number_input("Max pieces for Van", value=20)
 
-    uploaded_file = st.file_uploader("Upload Manifest File", type=["xlsx", "xls", "csv"])
-    if uploaded_file:
-        st.info("Processing manifest...")
+    # MULTIPLE FILE UPLOAD SECTION
+    st.subheader("📁 Upload Manifest Files")
+    
+    upload_mode = st.radio(
+        "Upload Mode:",
+        ["Single File", "Multiple Files (Auto-merge)"],
+        horizontal=True
+    )
+    
+    if upload_mode == "Single File":
+        uploaded_file = st.file_uploader("Upload Manifest File", type=["xlsx", "xls", "csv"])
+        uploaded_files = [uploaded_file] if uploaded_file else []
+    else:
+        uploaded_files = st.file_uploader(
+            "Upload Multiple Manifest Files", 
+            type=["xlsx", "xls", "csv"],
+            accept_multiple_files=True,
+            help="Upload 1-5 CSV/Excel files - they will be automatically merged"
+        )
+    
+    if uploaded_files:
+        st.info(f"Processing {len(uploaded_files)} file(s)...")
         
+        # Show files to be processed
+        if len(uploaded_files) > 1:
+            st.write("📋 **Files to merge:**")
+            for i, file in enumerate(uploaded_files, 1):
+                st.write(f"{i}. {file.name}")
+        
+        # Process files
+        if len(uploaded_files) == 1:
+            merged_manifest = process_manifest(uploaded_files[0])
+        else:
+            merged_manifest = process_multiple_manifests(uploaded_files)
+        
+        if merged_manifest.empty:
+            st.error("No valid data found in uploaded files")
+            return
+            
+        # Continue with existing processing
         street_city_routes = load_street_city_routes('input/route_street_city.xlsx')
         fallback_routes = load_fallback_routes('input/routes_database.xlsx')
-        manifest = process_manifest(uploaded_file)
-        matched_manifest = match_address_to_route(manifest, street_city_routes, fallback_routes)
+        matched_manifest = match_address_to_route(merged_manifest, street_city_routes, fallback_routes)
         
         output_path = "output"
         os.makedirs(output_path, exist_ok=True)
