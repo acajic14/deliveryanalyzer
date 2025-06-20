@@ -15,7 +15,7 @@ from rapidfuzz import fuzz, process
 from openpyxl import Workbook
 from openpyxl.styles import Font
 from openpyxl.utils.dataframe import dataframe_to_rows
-from open极pyxl.formatting.rule import CellIsRule
+from openpyxl.formatting.rule import CellIsRule
 import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.base import MIMEBase
