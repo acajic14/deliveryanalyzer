@@ -15,7 +15,7 @@ from rapidfuzz import fuzz, process
 from openpyxl import Workbook
 from openpyxl.styles import Font
 from openpyxl.utils.dataframe import dataframe_to_rows
-from openpyxl.formatting.rule import CellIs极Rule
+from openpyxl.formatting.rule import CellIsRule
 import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.base import MIMEBase
@@ -83,7 +83,7 @@ def load_street_city_routes(path):
     try:
         if not os.path.exists(path):
             st.warning(f"⚠️ Street-city routes file not found: {path}")
-            return pd.DataFrame(columns=['ROUTE', 'STREET', 'CITY', 'CITY_CLEAN', 'STREET_CLEAN'])
+            return pd.DataFrame(columns=['ROUTE', 'STREET', 'CITY', 'CITY_CLEAN', '极STREET_CLEAN'])
         
         df = pd.read_excel(path)
         df.columns = ['ROUTE', 'STREET', 'CITY']
@@ -198,7 +198,7 @@ def send_route_reports(route_summary, specialized_reports, email_mapping, output
 Please find attached the daily route report for {report_type} routes ({', '.join(route_prefixes)}).
 
 Summary for {datetime.now().strftime('%Y-%m-%d')}:
-- Total Shipments: {极total_shipments}
+- Total Shipments: {total_shipments}
 - Total Weight: {total_weight:.1f} kg
 - Routes Covered: {', '.join(route_prefixes)}
 
@@ -247,10 +247,10 @@ def apply_column_mapping(df):
     street1 = new_df['CONSIGNEE_STREET1'].fillna('')
     street2 = new_df['CONSIGNEE_STREET2'].fillna('')
     new_df['CONSIGNEE_STREET'] = street1.str.strip() + ' ' + street2.str.strip()
-    new_df['CONSIGNEE_STREET'] = new_df['极CONSIGNEE_STREET'].str.replace('nan', '').str.strip()
+    new_df['CONSIGNEE_STREET'] = new_df['CONSIGNEE_STREET'].str.replace('nan', '').str.strip()
     new_df['HOUSE_NUMBER'] = new_df['CONSIGNEE_STREET'].apply(extract_house_number)
-    new_df['HOUSE_NUMBER_FLOAT'] = new_df['HOUSE_NUMBER'].apply(house_number_to_float)
-    new_df['STREET_NAME'] = new_df['CONSIGN极EE_STREET'].apply(clean_street_name)
+    new_df['HOUSE_NUMBER_FLOAT'] = new_df['HOUSE_NUMBER'].apply(house_number_to极float)
+    new_df['STREET_NAME'] = new_df['CONSIGNEE_STREET'].apply(clean_street_name)
     if 'CONSIGNEE_ZIP' in new_df.columns:
         new_df['CONSIGNEE_ZIP'] = new_df['CONSIGNEE_ZIP'].astype(str).str.extract(r'(\d{4})')[0].str.zfill(4)
     for col in ['WEIGHT', 'VOLUMETRIC_WEIGHT']:
@@ -261,7 +261,6 @@ def apply_column_mapping(df):
     new_df['MATCH_SCORE'] = 0.0
     new_df['MATCH_METHOD'] = None
     new_df['CONSIGNEE_ADDRESS'] = new_df['CONSIGNEE_STREET'].apply(clean_nan_from_address)
-    # FIX: Corrected column name
     new_df['CONSIGNEE_NAME_NORM'] = new_df['CONSIGNEE_NAME'].apply(normalize_consignee_name)
     return new_df
 
@@ -443,7 +442,7 @@ def generate_reports(
     vehicle_weight_thr=70, vehicle_vol_thr=150, vehicle_pieces_thr=12,
     vehicle_kg_per_piece_thr=10, vehicle_van_max_pieces=20
 ):
-    # FIX: Ensure required columns exist
+    # Ensure required columns exist
     required_cols = ['HWB', 'MATCHED_ROUTE', 'CONSIGNEE_NAME_NORM', 'CONSIGNEE_NAME', 
                     'CONSIGNEE_ZIP', 'CONSIGNEE_ADDRESS', 'WEIGHT', 'VOLUMETRIC_WEIGHT', 'PIECES']
     
@@ -454,7 +453,7 @@ def generate_reports(
 
     hwb_aggregated = manifest_df.groupby(['HWB', 'MATCHED_ROUTE']).agg({
         'CONSIGNEE_NAME_NORM': 'first',
-        'CONSIGNEE_NAME': 'first',
+        'CON极IGNEE_NAME': 'first',
         'CONSIGNEE_ZIP': 'first',
         'CONSIGNEE_ADDRESS': 'first',
         'WEIGHT': 'sum',
@@ -516,7 +515,7 @@ def generate_reports(
         sheet.cell(row=current_row, column=1, value="Product")
         sheet.cell(row=current_row, column=2, value="Shipments")
         sheet.cell(row=current_row, column=3, value="Pieces")
-        sheet.cell(row=current_row, column极=4, value="Pieces/Shipment")
+        sheet.cell(row=current_row, column=4, value="Pieces/Shipment")
         current_row += 1
         
         pcc_categories = [('WPX','WPX'), ('TDY','TDY'), ('ESI','ESI'), ('ECX','ECX'), ('ESU','ESU'), ('ALL','All volume')]
@@ -575,7 +574,7 @@ def generate_reports(
                     'CITY', 'ZIP', 'AWB', 'PIECES'
                 ]
                 
-                sheet_data = sheet_data.sort_values(['MATCHED ROUTE', 'ZIP'])
+                sheet_data = sheet_data.sort_values(['MATCHED ROUT极', 'ZIP'])
                 
                 try:
                     sheet_data.to_excel(writer, sheet_name=prefix, index=False)
@@ -598,7 +597,7 @@ def generate_reports(
     specialized_reports['NMO'] = create_specialized_report(manifest_df, ['NM1', 'NM2'], 'NMO', output_path, timestamp)
     specialized_reports['CEJ'] = create_specialized_report(manifest_df, ['CE1', 'CE2'], 'CEJ', output_path, timestamp)
     specialized_reports['NGR'] = create_specialized_report(manifest_df, ['NG1', 'NG2'], 'NGR', output_path, timestamp)
-    specialized_reports['NGX'] = create_specialized_report(manifest_df, ['NGX'], 'NGX', output极path, timestamp)
+    specialized_reports['NGX'] = create_specialized_report(manifest_df, ['NGX'], 'NGX', output_path, timestamp)
     specialized_reports['KOP'] = create_specialized_report(manifest_df, ['KP1'], 'KOP', output_path, timestamp)
 
     # SPECIAL CASES REPORT (Threshold-based only)
@@ -858,7 +857,7 @@ def main():
             with open(f"{output_path}/route_summary_{timestamp}.xlsx", "rb") as f:
                 st.download_button("Route Summary", f, f"route_summary_{timestamp}.xlsx")
         with col2:
-            with open(f"{output_path}/special_cases_{timestamp}.xlsx", "rb") as f:
+            with open(f"{output_path}/special_cases_{timestamp}.xlsx", "rb")极 as f:
                 st.download_button("Special Cases", f, f"special_cases_{timestamp}.xlsx")
         with col3:
             with open(f"{output_path}/matching_details_{timestamp}.xlsx", "rb") as f:
