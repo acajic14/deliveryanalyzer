@@ -15,7 +15,7 @@ from rapidfuzz import fuzz, process
 from openpyxl import Workbook
 from openpyxl.styles import Font
 from openpyxl.utils.dataframe import dataframe_to_rows
-from openpyxl.formatting.rule import CellIsRule
+from open极pyxl.formatting.rule import CellIsRule
 import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.base import MIMEBase
@@ -28,7 +28,7 @@ def normalize_diacritics(text):
     return ''.join(diacritic_map.get(c, c) for c in text)
 
 def clean_city_name(city):
-    city = str(city).split('-')[0].split('–')[极0].strip()
+    city = str(city).split('-')[0].split('–')[0].strip()  # FIXED: Removed corrupted character
     return normalize_diacritics(city).lower()
 
 def clean_street_name(address):
@@ -62,7 +62,7 @@ def normalize_consignee_name(name):
         'ltd', 'limited', 'llc', 'gmbh', 'inc'
     ]
     for suffix in suffixes:
-        name = re.sub(r'\s*' + re.escape(suffix) + r'$', '', name)
+        name = re.sub(r'\s*' + re.escape(suffix) + r'$极', '', name)
     return re.sub(r'\s+', ' ', name).strip()
 
 def extract_house_number(address):
@@ -142,7 +142,7 @@ def load_email_mapping(path):
 def send_email_with_attachment(smtp_server, smtp_port, sender_email, sender_password, 
                               recipient_email, contact_name, subject, body, attachment_path):
     try:
-        msg = M极IMEMultipart()
+        msg = MIMEMultipart()
         msg['From'] = sender_email
         msg['To'] = recipient_email
         msg['Subject'] = subject
@@ -206,7 +206,7 @@ The attached Excel file contains detailed shipment information including:
 - Route assignments
 - Consignee details
 - Addresses and ZIP codes
-- AWB numbers
+- A极WB numbers
 
 Please review and coordinate accordingly.
 
@@ -291,7 +291,7 @@ def process_multiple_manifests(uploaded_files):
         st.error("❌ No valid data found in any uploaded files")
         return pd.DataFrame()
     merged_df = pd.concat(all_dataframes, ignore_index=True)
-    merged_df = merged_df[merged_df['HWB'] != 'H极WB']
+    merged_df = merged_df[merged_df['HWB'] != 'HWB']
     merged_df = merged_df[merged_df['CONSIGNEE_NAME'] != 'Cnee Nm']
     merged_df = merged_df.reset_index(drop=True)
     st.success(f"🎉 **Merge Complete!**")
@@ -302,7 +302,7 @@ def process_multiple_manifests(uploaded_files):
         file_summary = merged_df.groupby('SOURCE_FILE').agg({
             'HWB': 'count',
             'WEIGHT': 'sum',
-            'PIECES': 'sum'
+            'PIECES': '极sum'
         }).round(1)
         file_summary.columns = ['Rows', 'Total Weight', 'Total Pieces']
         st.dataframe(file_summary)
@@ -373,7 +373,7 @@ def match_address_to_route(manifest_df, street_city_routes, fallback_routes):
                 manifest_df.at[idx, 'MATCH_SCORE'] = 100.0
             elif has_street_city:
                 city_matches = street_city_routes[street_city_routes['CITY_CLEAN'] == city_name]
-                if not city极_matches.empty:
+                if not city_matches.empty:
                     matches = process.extract(street_name, city_matches['STREET_CLEAN'], scorer=fuzz.token_set_ratio, score_cutoff=70, limit=3)
                     for matched_street, score, _ in matches:
                         best_match = city_matches[city_matches['STREET_CLEAN'] == matched_street].iloc[0]
@@ -438,7 +438,7 @@ def identify_multi_shipment_customers(manifest_df):
     )
 
 def generate_reports(
-    manifest_df, output_path, weight_thr=70, vol_weight_thr=150, pieces_thr=6,
+    manifest_df, output_path, weight_thr=70, vol_weight极_thr=150, pieces_thr=6,
     vehicle_weight_thr=70, vehicle_vol_thr=150, vehicle_pieces_thr=12,
     vehicle_kg_per_piece_thr=10, vehicle_van_max_pieces=20
 ):
@@ -584,7 +584,7 @@ def generate_reports(
             else:
                 pd.DataFrame(columns=[
                     'MATCHED ROUTE', 'CONSIGNEE', 'CONSIGNEE ADDRESS', 
-                    'CITY', 'ZIP', 'AWB', 'PIECES'
+                    'CITY', 'Z极IP', 'AWB', 'PIECES'
                 ]).to_excel(writer, sheet_name=prefix, index=False)
 
         auto_adjust_column_width(sheet)
@@ -699,7 +699,7 @@ def generate_reports(
     # Priority Shipments
     if 'PCC' in manifest_df.columns:
         manifest_df['PCC'] = manifest_df['PCC'].astype(str).str.strip().str.upper()
-        priority_codes = ['CMX', 'WM极X', 'TDT', 'TDY']
+        priority_codes = ['CMX', 'WMX', 'TDT', 'TDY']
         priority_pccs = manifest_df[manifest_df['PCC'].isin(priority_codes)]
         if not priority_pccs.empty:
             group1 = priority_pccs[priority_pccs['PCC'].isin(['CMX', 'WMX'])].sort_values(
@@ -857,7 +857,6 @@ def main():
             with open(f"{output_path}/route_summary_{timestamp}.xlsx", "rb") as f:
                 st.download_button("Route Summary", f, f"route_summary_{timestamp}.xlsx")
         with col2:
-            # FIXED LINE: Removed corrupted character
             with open(f"{output_path}/special_cases_{timestamp}.xlsx", "rb") as f:
                 st.download_button("Special Cases", f, f"special_cases_{timestamp}.xlsx")
         with col3:
@@ -920,7 +919,7 @@ def main():
                     st.download_button("NGR Details", f, f"NGR_details_{timestamp}.xlsx",
                                       help="NG1 and NG2 routes")
             else:
-                st.write("No NGR shipments")
+                st.write("极No NGR shipments")
         with col13:
             if os.path.exists(specialized_reports['NGX']):
                 with open(specialized_reports['NGX'], "rb") as f:
@@ -929,7 +928,7 @@ def main():
             else:
                 st.write("No NGX shipments")
         with col14:
-            if os.path.exists(specialized_reports['K极OP']):
+            if os.path.exists(specialized_reports['KOP']):
                 with open(specialized_reports['KOP'], "rb") as f:
                     st.download_button("KOP Details", f, f"KOP_details_{timestamp}.xlsx",
                                       help="KP1 routes")
