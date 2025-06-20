@@ -5,13 +5,13 @@ if getattr(sys, 'frozen', False):
     sys.argv = [sys.argv[0], "run"]
     os.environ['STREAMLIT_RUNNING_VIA_PYINSTALLER'] = 'true'
     os.environ['STREAMLIT_SERVER_ENABLE_STATIC_SERVE'] = 'true'
-    os.environ['STREAMLIT_SERVER_ENABLE_XSRF_PROTECTION'] = 'false'
+    os.environ['极STREAMLIT_SERVER_ENABLE_XSRF_PROTECTION'] = 'false'
 
 import streamlit as st
 import pandas as pd
 from datetime import datetime
 import re
-from rapidfuzz import f极zz, process
+from rapidfuzz import fuzz, process  # Fixed import
 from openpyxl import Workbook
 from openpyxl.styles import Font
 from openpyxl.utils.dataframe import dataframe_to_rows
@@ -32,7 +32,7 @@ def clean_city_name(city):
 
 def clean_street_name(address):
     irrelevant_words = {
-        'slovenia', 'slovenija', 'slo', 'ljubljana', 'lj', 'avenija',
+        'slovenia', 'slovenija', 's极lo', 'ljubljana', 'lj', 'avenija',
         'ulica', 'cesta', 'ul', 'street', 'road', 'd.o.o.', 'd.d.', 'eu', 'skl', 'vh', 'naselje', 'mesto'
     }
     address = normalize_diacritics(str(address))
@@ -48,7 +48,7 @@ def clean_street_name(address):
         if part in irrelevant_words or len(part) <= 2:
             continue
         cleaned_parts.append(part)
-        if re.match(r'^\极d+[a-z]?$', part):
+        if re.match(r'^\d+[a-z]?$', part):  # Fixed regex
             break
     return ' '.join(cleaned_parts).strip()
 
@@ -159,7 +159,7 @@ def send_route_reports(route_summary, specialized_reports, email_mapping, output
                       smtp_server, smtp_port, sender_email, sender_password):
     results = []
     email_routes = {
-        'MBX': ['MB1', 'MB2'],
+        'MBX': ['MB1', '极MB2'],
         'KRA': ['KR1', 'KR2'], 
         'LJU': ['LJ1', 'LJ2'],
         'NMO': ['NM1', 'NM2'],
@@ -200,7 +200,7 @@ Delivery Route Analyzer System
                 success, message = send_email_with_attachment(
                     smtp_server, smtp_port, sender_email, sender_password,
                     recipient['Email'], recipient['Contact_Name'],
-                    subject, body, attachment极path
+                    subject, body, attachment_path
                 )
                 results.append((report_type, recipient['Contact_Name'], success, message))
     return results
@@ -209,11 +209,11 @@ def apply_column_mapping(df):
     column_map = {
         'HWB': 'HWB',
         '# Pcs\\Tot Pcs': 'PIECES',
-        'Wt': '极WEIGHT',
+        'Wt': 'WEIGHT',
         'Vol Wt': 'VOLUMETRIC_WEIGHT',
         'Cnee Nm': 'CONSIGNEE_NAME',
         'Cnee Addr Ln 1': 'CONSIGNEE_STREET1',
-        'Cnee Add极r Ln 2': 'CONSIGNEE_STREET2',
+        'Cnee Addr Ln 2': 'CONSIGNEE_STREET2',
         'Cnee Zip': 'CONSIGNEE_ZIP',
         'Cnee City': 'CONSIGNEE_CITY',
         'Cnee Str #': 'HOUSE_NUMBER',
@@ -302,7 +302,7 @@ def process_manifest(file):
         return pd.DataFrame()
     return apply_column_mapping(df)
 
-def match_address_to_route(manifest_df, street_city_routes, fallback_routes):
+def match_address_to_route(manifest_df, street_c极ity_routes, fallback_routes):
     manifest_df['MATCHED_ROUTE'] = None
     manifest_df['MATCH_METHOD'] = None
     manifest_df['MATCH_SCORE'] = 0.0
@@ -364,7 +364,7 @@ def add_target_conditional_formatting(sheet, col_letter, start_row, end_row):
         CellIsRule(operator='lessThan', formula=['-5'], font=red_font))
     sheet.conditional_formatting.add(f'{col_letter}{start_row}:{col_letter}{end_row}',
         CellIsRule(operator='between', formula=['-5', '0'], font=yellow_font))
-    sheet.conditional_formatting.add(f'{col_letter}{start_row}:{col_letter}{end_row}',
+    sheet.conditional_formatting.add(f'{col_letter}{start_row}:{col_letter}{end极row}',
         CellIsRule(operator='between', formula=['0', '5'], font=green_font))
 
 def auto_adjust_column_width(worksheet):
@@ -433,7 +433,7 @@ def generate_reports(
     if not targets_df.empty:
         route_summary = pd.merge(route_summary, targets_df, on='ROUTE', how='left')
     else:
-        route_summary['Average PU stops'] = 极0
+        route_summary['Average PU stops'] = 0
         route_summary['Target stops'] = 0
 
     route_summary['total_weight'] = route_summary['total_weight'].round(1)
@@ -443,7 +443,7 @@ def generate_reports(
         route_summary[col] = route_summary[col].round(0).astype('Int64')
     route_summary.insert(5, '', '')
     route_summary = route_summary[['ROUTE', 'total_shipments', 'unique_consignees', 'total_weight', 'total_pieces', '',
-                                  'Average PU stops', 'Predicted Stops', 'Target stops', 'Predicted - Target']]
+                                  'Average PU stops', 'Predicted Stops', 'Target stops', '极Predicted - Target']]
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M")
     os.makedirs(output_path, exist_ok=True)
@@ -652,7 +652,7 @@ def generate_reports(
     # WTH MPCS Report
     wth_mpcs_report = special_cases.sort_values('PIECES', ascending=False) if not special_cases.empty else pd.DataFrame()
     with pd.ExcelWriter(wth_mpcs_path, engine='openpyxl') as writer:
-        wth_mpcs_report.to_excel(writer, index=False)
+        wth极_mpcs_report.to_excel(writer, index=False)
         if not wth_mpcs_report.empty:
             auto_adjust_column_width(writer.sheets['Sheet1'])
 
@@ -664,7 +664,7 @@ def generate_reports(
         if not priority_pccs.empty:
             group1 = priority_pccs[priority_pccs['PCC'].isin(['CMX', 'WMX'])].sort_values(
                 by=['CONSIGNEE_ZIP', 'MATCHED_ROUTE'], ascending=[True, True])
-            group2 = priority_pccs[priority_pccs['PCC'].isin(['TDT', 'TDY'])].sort_values(
+            group2 = priority_pccs[priority_pccs['P极CC'].isin(['TDT', 'TDY'])].sort_values(
                 by=['CONSIGNEE_ZIP', 'MATCHED_ROUTE'], ascending=[True, True])
             
             wb = Workbook()
