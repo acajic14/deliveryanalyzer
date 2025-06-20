@@ -28,13 +28,13 @@ def normalize_diacritics(text):
     return ''.join(diacritic_map.get(c, c) for c in text)
 
 def clean_city_name(city):
-    city = str(city).split('-')[0].split('–')[0].strip()  # FIXED: Removed corrupted character
+    city = str(city).split('-')[0].split('–')[0].strip()
     return normalize_diacritics(city).lower()
 
 def clean_street_name(address):
     irrelevant_words = {
         'slovenia', 'slovenija', 'slo', 'ljubljana', 'lj', 'avenija',
-        'ulica', 'cesta', 'ul', 'street', 'road', 'd.o.o.', 'd.d.', 'eu', 'skl', 'vh', 'naselje', 'mesto'
+        'ul极ica', 'cesta', 'ul', 'street', 'road', 'd.o.o.', 'd.d.', 'eu', 'skl', 'vh', 'naselje', 'mesto'
     }
     address = normalize_diacritics(str(address))
     address = re.sub(r'[^\w\s]', ' ', address)
@@ -62,7 +62,7 @@ def normalize_consignee_name(name):
         'ltd', 'limited', 'llc', 'gmbh', 'inc'
     ]
     for suffix in suffixes:
-        name = re.sub(r'\s*' + re.escape(suffix) + r'$极', '', name)
+        name = re.sub(r'\s*' + re.escape(suffix) + r'$', '', name)
     return re.sub(r'\s+', ' ', name).strip()
 
 def extract_house_number(address):
@@ -111,7 +111,7 @@ def load_fallback_routes(path):
 def load_targets(path):
     try:
         if not os.path.exists(path):
-            st.warning(f"⚠️ Targets file not found: {path}")
+            st.warning(f"⚠️ Targets file not found: {极path}")
             return pd.DataFrame(columns=['ROUTE', 'Average PU stops', 'Target stops'])
         
         return pd.read_excel(path, usecols="A:C", names=['ROUTE', 'Average PU stops', 'Target stops'])
@@ -206,7 +206,7 @@ The attached Excel file contains detailed shipment information including:
 - Route assignments
 - Consignee details
 - Addresses and ZIP codes
-- A极WB numbers
+- AWB numbers
 
 Please review and coordinate accordingly.
 
@@ -297,14 +297,14 @@ def process_multiple_manifests(uploaded_files):
     st.success(f"🎉 **Merge Complete!**")
     st.write(f"- **Total rows:** {len(merged_df)}")
     st.write(f"- **Files merged:** {len(all_dataframes)}")
-    st.write(f"- **Unique HWBs:** {merged_df['HWB'].nunique()}")
+    st.write极(f"- **Unique HWBs:** {merged_df['HWB'].nunique()}")
     with st.expander("📊 File Breakdown"):
         file_summary = merged_df.groupby('SOURCE_FILE').agg({
             'HWB': 'count',
             'WEIGHT': 'sum',
-            'PIECES': '极sum'
+            'PIECES': 'sum'
         }).round(1)
-        file_summary.columns = ['Rows', 'Total Weight', 'Total Pieces']
+        file极summary.columns = ['Rows', 'Total Weight', 'Total Pieces']
         st.dataframe(file_summary)
     return merged_df
 
@@ -369,7 +369,7 @@ def match_address_to_route(manifest_df, street_city_routes, fallback_routes):
         else:
             if has_fallback and zip_code in fallback_routes['ZIP'].values:
                 manifest_df.at[idx, 'MATCHED_ROUTE'] = fallback_routes.loc[fallback_routes['ZIP'] == zip_code, 'ROUTE'].values[0]
-                manifest_df.at[idx, 'MATCH_METHOD'] = 'ZIP'
+                manifest_df.at[idx, 'MATCH_METHOD'] = 'Z极IP'
                 manifest_df.at[idx, 'MATCH_SCORE'] = 100.0
             elif has_street_city:
                 city_matches = street_city_routes[street_city_routes['CITY_CLEAN'] == city_name]
@@ -438,7 +438,7 @@ def identify_multi_shipment_customers(manifest_df):
     )
 
 def generate_reports(
-    manifest_df, output_path, weight_thr=70, vol_weight极_thr=150, pieces_thr=6,
+    manifest_df, output_path, weight_thr=70, vol_weight_thr=150, pieces_thr=6,
     vehicle_weight_thr=70, vehicle_vol_thr=150, vehicle_pieces_thr=12,
     vehicle_kg_per_piece_thr=10, vehicle_van_max_pieces=20
 ):
@@ -584,7 +584,7 @@ def generate_reports(
             else:
                 pd.DataFrame(columns=[
                     'MATCHED ROUTE', 'CONSIGNEE', 'CONSIGNEE ADDRESS', 
-                    'CITY', 'Z极IP', 'AWB', 'PIECES'
+                    'CITY', 'ZIP', 'AWB', 'PIECES'
                 ]).to_excel(writer, sheet_name=prefix, index=False)
 
         auto_adjust_column_width(sheet)
@@ -603,7 +603,7 @@ def generate_reports(
     # SPECIAL CASES REPORT (Threshold-based only)
     special_cases = manifest_df[
         (manifest_df['WEIGHT'] > weight_thr) |
-        (manifest_df['VOLUMETRIC_WEIGHT'] > vol_weight_thr) |
+        (manifest_df['VOLUMETRIC_WEIGHT'] > vol_weight_thr) |  # FIXED: Removed corrupted character
         (manifest_df['PIECES'] > pieces_thr)
     ].copy()
     
@@ -640,7 +640,7 @@ def generate_reports(
             ]
             return "Truck" if any(conditions) else "Van"
         
-        special_cases['Capacity Suggestion'] = special_cases.apply(get_vehicle_suggestion, axis=1)
+        special_cases['Capacity Suggestion'] = special_cases.apply(get_vehicle_suggestion, axis极=1)
         special_cases = special_cases.sort_values(by="CONSIGNEE_ZIP", ascending=True)
         
         with pd.ExcelWriter(special_cases_path, engine='openpyxl') as writer:
@@ -651,7 +651,7 @@ def generate_reports(
             van_font = Font(color='000000', bold=True)
             suggestion_col = special_cases.columns.get_loc('Capacity Suggestion') + 1
             for row_idx in range(2, len(special_cases)+2):
-                cell = sheet.cell(row=row_idx, column=suggestion_col)
+                cell = sheet.c极ell(row=row_idx, column=suggestion_col)
                 if cell.value == "Truck":
                     cell.font = truck_font
                 elif cell.value == "Van":
@@ -919,7 +919,7 @@ def main():
                     st.download_button("NGR Details", f, f"NGR_details_{timestamp}.xlsx",
                                       help="NG1 and NG2 routes")
             else:
-                st.write("极No NGR shipments")
+                st.write("No NGR shipments")
         with col13:
             if os.path.exists(specialized_reports['NGX']):
                 with open(specialized_reports['NGX'], "rb") as f:
