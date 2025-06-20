@@ -155,7 +155,7 @@ def load_targets(path):
         return pd.DataFrame(columns=['ROUTE', 'Average PU stops', 'Target stops', 'SERVICE_PARTNER', 'LIST_OF_SP', 'SUM_TARGET_STOPS', 'AVG_ROUTES', 'SPR'])
 
 def calculate_service_partner_spr(route_summary, targets_df):
-    """Calculate predicted SPR per service partner - WORKING VERSION"""
+    """Calculate predicted SPR per service partner with route adjustment recommendations"""
     try:
         if targets_df.empty or 'SERVICE_PARTNER' not in targets_df.columns:
             return pd.DataFrame()
@@ -205,7 +205,12 @@ def calculate_service_partner_spr(route_summary, targets_df):
         
         # Calculate predicted SPR per service partner
         spr_summary['Predicted_SPR'] = spr_summary['Predicted Stops'] / spr_summary['AVG_ROUTES']
-        
+
+        # Calculate routes to add or remove
+        # Formula: (Predicted Stops - Target Stops) / SPR Target
+        # Positive value means routes to add, negative means routes to remove
+        spr_summary['Routes_to_Adjust'] = (spr_summary['Predicted Stops'] - spr_summary['SUM_TARGET_STOPS']) / spr_summary['SPR']
+
         # Round values for display
         spr_summary['Predicted Stops'] = spr_summary['Predicted Stops'].fillna(0).round(1)
         spr_summary['Percent_of_Target'] = spr_summary['Percent_of_Target'].fillna(0).round(1)
@@ -213,10 +218,11 @@ def calculate_service_partner_spr(route_summary, targets_df):
         spr_summary['SUM_TARGET_STOPS'] = spr_summary['SUM_TARGET_STOPS'].fillna(0).astype(int)
         spr_summary['AVG_ROUTES'] = spr_summary['AVG_ROUTES'].fillna(0).astype(int)
         spr_summary['SPR'] = spr_summary['SPR'].fillna(0).round(1)
+        spr_summary['Routes_to_Adjust'] = spr_summary['Routes_to_Adjust'].fillna(0).round(1)
         
         # Clean up columns
-        spr_summary = spr_summary[['LIST_OF_SP', 'SUM_TARGET_STOPS', 'AVG_ROUTES', 'SPR', 'Predicted Stops', 'Predicted_SPR', 'Percent_of_Target']]
-        spr_summary.columns = ['Service Partner', 'Target Stops', 'Avg Routes', 'SPR Target', 'Predicted Stops', 'Predicted SPR', 'Percent of Target (%)']
+        spr_summary = spr_summary[['LIST_OF_SP', 'SUM_TARGET_STOPS', 'AVG_ROUTES', 'SPR', 'Predicted Stops', 'Predicted_SPR', 'Percent_of_Target', 'Routes_to_Adjust']]
+        spr_summary.columns = ['Service Partner', 'Target Stops', 'Avg Routes', 'SPR Target', 'Predicted Stops', 'Predicted SPR', 'Percent of Target (%)', 'Routes to Add/Remove']
         
         return spr_summary
         
@@ -242,7 +248,7 @@ def add_service_partner_spr_summary(workbook, sheet, spr_summary):
     
     # Title
     title_row = insert_row
-    sheet.merge_cells(f'A{title_row}:G{title_row}')
+    sheet.merge_cells(f'A{title_row}:H{title_row}')
     sheet[f'A{title_row}'] = 'DHL Service Partner SPR Summary'
     sheet[f'A{title_row}'].font = Font(bold=True, size=14, color="FFFFFF")
     sheet[f'A{title_row}'].fill = dhl_red
@@ -263,13 +269,21 @@ def add_service_partner_spr_summary(workbook, sheet, spr_summary):
         for col_num, value in enumerate(row, 1):
             cell = sheet.cell(row=data_start_row + idx, column=col_num, value=value)
             # Highlight percentage column based on performance
-            if col_num == len(headers):  # Percent of Target column
+            if col_num == len(headers) - 1:  # Percent of Target column
                 if value >= 100:
                     cell.font = Font(color="008000", bold=True)  # Green for over target
                 elif value >= 90:
                     cell.font = Font(color="FFA500", bold=True)  # Orange for close to target
                 else:
                     cell.font = Font(color="FF0000", bold=True)  # Red for under target
+            # Highlight route adjustment column
+            elif col_num == len(headers):  # Routes to Add/Remove column
+                if value < -0.5:
+                    cell.font = Font(color="FF0000", bold=True)  # Red for remove routes
+                elif value > 0.5:
+                    cell.font = Font(color="008000", bold=True)  # Green for add routes
+                else:
+                    cell.font = Font(color="FFA500", bold=True)  # Orange for optimal
     
     return rows_needed
 
@@ -1356,26 +1370,7 @@ def main():
             multi_shipment_thr
         )
 
-        # Debug: Check which files were created
-        st.write("🔍 **Debug: Generated Files**")
-        expected_files = [
-            f"DHL_route_summary_{timestamp}.xlsx",
-            f"DHL_special_cases_{timestamp}.xlsx", 
-            f"DHL_matching_details_{timestamp}.xlsx",
-            f"DHL_WTH_MPCS_Report_{timestamp}.xlsx",
-            f"DHL_Priority_Shipments_{timestamp}.xlsx",
-            f"DHL_multi_shipments_{timestamp}.xlsx"
-        ]
-        
-        for filename in expected_files:
-            filepath = f"{output_path}/{filename}"
-            if os.path.exists(filepath):
-                file_size = os.path.getsize(filepath)
-                st.success(f"✅ {filename} ({file_size} bytes)")
-            else:
-                st.error(f"❌ {filename} - NOT FOUND")
-
-        # Enhanced DHL branded SPR metric with Service Partner breakdown
+        # Enhanced DHL branded SPR metric with Service Partner breakdown and Route Adjustments
         if not route_summary.empty and 'Predicted Stops' in route_summary:
             predicted_spr = route_summary['Predicted Stops'].mean()
             
@@ -1391,7 +1386,7 @@ def main():
             
             if not spr_summary.empty:
                 st.subheader("🤝 Service Partner Performance Summary")
-                st.markdown("*Real-time performance analysis by service partner with target comparison*")
+                st.markdown("*Real-time performance analysis with route adjustment recommendations*")
                 
                 st.markdown("""
                 <div class="service-partner-table">
@@ -1403,12 +1398,18 @@ def main():
                         'Predicted Stops': '{:,.1f}',
                         'Predicted SPR': '{:.1f}',
                         'SPR Target': '{:.1f}',
-                        'Percent of Target (%)': '{:.1f}%'
+                        'Percent of Target (%)': '{:.1f}%',
+                        'Routes to Add/Remove': '{:+.1f}'
                     }).applymap(
                         lambda x: 'color: green; font-weight: bold' if isinstance(x, (int, float)) and x >= 100 
                         else 'color: orange; font-weight: bold' if isinstance(x, (int, float)) and 90 <= x < 100
                         else 'color: red; font-weight: bold' if isinstance(x, (int, float)) and x < 90
                         else '', subset=['Percent of Target (%)']
+                    ).applymap(
+                        lambda x: 'color: red; font-weight: bold' if isinstance(x, (int, float)) and x < -0.5
+                        else 'color: green; font-weight: bold' if isinstance(x, (int, float)) and x > 0.5
+                        else 'color: orange; font-weight: bold' if isinstance(x, (int, float)) and abs(x) <= 0.5
+                        else '', subset=['Routes to Add/Remove']
                     ), 
                     use_container_width=True
                 )
@@ -1427,11 +1428,12 @@ def main():
                     total_target = spr_summary['Target Stops'].sum()
                     st.metric("Total Predicted Stops", f"{total_predicted:.0f}", delta=f"Target: {total_target}")
                 with col4:
-                    avg_predicted_spr = spr_summary['Predicted SPR'].mean()
-                    avg_target_spr = spr_summary['SPR Target'].mean()
-                    st.metric("Avg Predicted SPR", f"{avg_predicted_spr:.1f}", delta=f"Target: {avg_target_spr:.1f}")
+                    routes_to_remove = spr_summary[spr_summary['Routes to Add/Remove'] < 0]['Routes to Add/Remove'].sum()
+                    routes_to_add = spr_summary[spr_summary['Routes to Add/Remove'] > 0]['Routes to Add/Remove'].sum()
+                    st.metric("Net Route Adjustment", f"{routes_to_remove + routes_to_add:+.1f}", 
+                             delta=f"Remove: {abs(routes_to_remove):.1f}, Add: {routes_to_add:.1f}")
                 
-                st.markdown("### 📈 Performance Insights")
+                st.markdown("### 📈 Performance Insights & Route Recommendations")
                 if avg_performance >= 100:
                     st.success(f"🎯 **Excellent Performance!** All service partners are meeting or exceeding targets with {avg_performance:.1f}% average performance.")
                 elif avg_performance >= 90:
@@ -1439,8 +1441,22 @@ def main():
                 else:
                     st.error(f"🚨 **Performance Below Target** - Average performance: {avg_performance:.1f}%. Review capacity and route optimization.")
                 
+                # Route adjustment recommendations
+                partners_to_reduce = spr_summary[spr_summary['Routes to Add/Remove'] < -0.5]
+                partners_to_expand = spr_summary[spr_summary['Routes to Add/Remove'] > 0.5]
+                
+                if not partners_to_reduce.empty:
+                    st.warning("📉 **Partners with excess capacity** (consider removing routes):")
+                    for _, partner in partners_to_reduce.iterrows():
+                        st.write(f"• **{partner['Service Partner']}**: Remove {abs(partner['Routes to Add/Remove']):.1f} routes to optimize SPR")
+                
+                if not partners_to_expand.empty:
+                    st.info("📈 **Partners with capacity for expansion** (consider adding routes):")
+                    for _, partner in partners_to_expand.iterrows():
+                        st.write(f"• **{partner['Service Partner']}**: Add {partner['Routes to Add/Remove']:.1f} routes to meet targets")
+                
             else:
-                st.info("ℹ️ Service Partner SPR data not available. Please check the debug information above to troubleshoot the targets.xlsx file structure.")
+                st.info("ℹ️ Service Partner SPR data not available.")
         else:
             st.warning("⚠️ No routes matched - cannot calculate SPR")
         
@@ -1448,7 +1464,7 @@ def main():
         <div class="dhl-success">
             <h2 style="color: white; margin: 0; font-size: 1.8rem;">🎉 DHL Route Analysis Complete!</h2>
             <p style="color: white; margin: 0.5rem 0 0 0; font-size: 1.1rem; font-style: italic;">Excellence. Simply delivered.</p>
-            <p style="color: white; margin: 0.5rem 0 0 0; font-size: 0.9rem;">All reports generated successfully with DHL branding and Service Partner analysis</p>
+            <p style="color: white; margin: 0.5rem 0 0 0; font-size: 0.9rem;">All reports generated successfully with DHL branding and Route Optimization recommendations</p>
         </div>
         """, unsafe_allow_html=True)
         
@@ -1492,14 +1508,14 @@ def main():
         
         # Enhanced Standard Reports Section with File Existence Checks
         st.subheader("📊 DHL Standard Reports")
-        st.markdown("*Professional reports with enhanced DHL branding, Service Partner SPR summary, and 'Excellence. Simply delivered.' tagline*")
+        st.markdown("*Professional reports with enhanced DHL branding, Service Partner SPR summary with route optimization recommendations*")
         col1, col2, col3 = st.columns(3)
         with col1:
             summary_file = f"{output_path}/DHL_route_summary_{timestamp}.xlsx"
             if os.path.exists(summary_file):
                 with open(summary_file, "rb") as f:
                     st.download_button("📋 Route Summary", f, f"DHL_route_summary_{timestamp}.xlsx",
-                                      help="Complete route analysis with DHL branding and Service Partner SPR summary")
+                                      help="Complete route analysis with DHL branding, Service Partner SPR summary and route optimization recommendations")
             else:
                 st.error("❌ Route Summary file not found")
         with col2:
