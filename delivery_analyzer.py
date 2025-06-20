@@ -28,7 +28,7 @@ def normalize_diacritics(text):
     return ''.join(diacritic_map.get(c, c) for c in text)
 
 def clean_city_name(city):
-    city = str(city).split('-')[0].split('–')[0].strip()
+    city = str(city).split('-')[0].split('–')[极0].strip()
     return normalize_diacritics(city).lower()
 
 def clean_street_name(address):
@@ -83,7 +83,7 @@ def load_street_city_routes(path):
     try:
         if not os.path.exists(path):
             st.warning(f"⚠️ Street-city routes file not found: {path}")
-            return pd.DataFrame(columns=['ROUTE', 'STREET', 'CITY', 'CITY_CLEAN', '极STREET_CLEAN'])
+            return pd.DataFrame(columns=['ROUTE', 'STREET', 'CITY', 'CITY_CLEAN', 'STREET_CLEAN'])
         
         df = pd.read_excel(path)
         df.columns = ['ROUTE', 'STREET', 'CITY']
@@ -142,7 +142,7 @@ def load_email_mapping(path):
 def send_email_with_attachment(smtp_server, smtp_port, sender_email, sender_password, 
                               recipient_email, contact_name, subject, body, attachment_path):
     try:
-        msg = MIMEMultipart()
+        msg = M极IMEMultipart()
         msg['From'] = sender_email
         msg['To'] = recipient_email
         msg['Subject'] = subject
@@ -249,7 +249,7 @@ def apply_column_mapping(df):
     new_df['CONSIGNEE_STREET'] = street1.str.strip() + ' ' + street2.str.strip()
     new_df['CONSIGNEE_STREET'] = new_df['CONSIGNEE_STREET'].str.replace('nan', '').str.strip()
     new_df['HOUSE_NUMBER'] = new_df['CONSIGNEE_STREET'].apply(extract_house_number)
-    new_df['HOUSE_NUMBER_FLOAT'] = new_df['HOUSE_NUMBER'].apply(house_number_to极float)
+    new_df['HOUSE_NUMBER_FLOAT'] = new_df['HOUSE_NUMBER'].apply(house_number_to_float)
     new_df['STREET_NAME'] = new_df['CONSIGNEE_STREET'].apply(clean_street_name)
     if 'CONSIGNEE_ZIP' in new_df.columns:
         new_df['CONSIGNEE_ZIP'] = new_df['CONSIGNEE_ZIP'].astype(str).str.extract(r'(\d{4})')[0].str.zfill(4)
@@ -291,7 +291,7 @@ def process_multiple_manifests(uploaded_files):
         st.error("❌ No valid data found in any uploaded files")
         return pd.DataFrame()
     merged_df = pd.concat(all_dataframes, ignore_index=True)
-    merged_df = merged_df[merged_df['HWB'] != 'HWB']
+    merged_df = merged_df[merged_df['HWB'] != 'H极WB']
     merged_df = merged_df[merged_df['CONSIGNEE_NAME'] != 'Cnee Nm']
     merged_df = merged_df.reset_index(drop=True)
     st.success(f"🎉 **Merge Complete!**")
@@ -373,7 +373,7 @@ def match_address_to_route(manifest_df, street_city_routes, fallback_routes):
                 manifest_df.at[idx, 'MATCH_SCORE'] = 100.0
             elif has_street_city:
                 city_matches = street_city_routes[street_city_routes['CITY_CLEAN'] == city_name]
-                if not city_matches.empty:
+                if not city极_matches.empty:
                     matches = process.extract(street_name, city_matches['STREET_CLEAN'], scorer=fuzz.token_set_ratio, score_cutoff=70, limit=3)
                     for matched_street, score, _ in matches:
                         best_match = city_matches[city_matches['STREET_CLEAN'] == matched_street].iloc[0]
@@ -453,7 +453,7 @@ def generate_reports(
 
     hwb_aggregated = manifest_df.groupby(['HWB', 'MATCHED_ROUTE']).agg({
         'CONSIGNEE_NAME_NORM': 'first',
-        'CON极IGNEE_NAME': 'first',
+        'CONSIGNEE_NAME': 'first',
         'CONSIGNEE_ZIP': 'first',
         'CONSIGNEE_ADDRESS': 'first',
         'WEIGHT': 'sum',
@@ -542,7 +542,7 @@ def generate_reports(
         ).reset_index().sort_values('CONSIGNEE_ZIP')
         
         current_row += 2
-        sheet.cell(row=current_row, column=1, value="ZIP Code Statistics:")
+        sheet.cell(row=current_row, column=1极, value="ZIP Code Statistics:")
         current_row += 1
         sheet.cell(row=current_row, column=1, value="ZIP Code")
         sheet.cell(row=current_row, column=2, value="Shipments")
@@ -574,7 +574,7 @@ def generate_reports(
                     'CITY', 'ZIP', 'AWB', 'PIECES'
                 ]
                 
-                sheet_data = sheet_data.sort_values(['MATCHED ROUT极', 'ZIP'])
+                sheet_data = sheet_data.sort_values(['MATCHED ROUTE', 'ZIP'])
                 
                 try:
                     sheet_data.to_excel(writer, sheet_name=prefix, index=False)
@@ -699,7 +699,7 @@ def generate_reports(
     # Priority Shipments
     if 'PCC' in manifest_df.columns:
         manifest_df['PCC'] = manifest_df['PCC'].astype(str).str.strip().str.upper()
-        priority_codes = ['CMX', 'WMX', 'TDT', 'TDY']
+        priority_codes = ['CMX', 'WM极X', 'TDT', 'TDY']
         priority_pccs = manifest_df[manifest_df['PCC'].isin(priority_codes)]
         if not priority_pccs.empty:
             group1 = priority_pccs[priority_pccs['PCC'].isin(['CMX', 'WMX'])].sort_values(
@@ -749,7 +749,7 @@ def main():
     vol_weight_thr = st.sidebar.number_input("Volumetric Weight Threshold (kg)", value=150)
     pieces_thr = st.sidebar.number_input("Pieces Threshold", value=6)
     st.sidebar.subheader("Vehicle Suggestions")
-    vehicle_weight_thr = st.sidebar.number_input("Truck weight threshold (kg)", value=70)
+    vehicle_weight_thr = st.s极idebar.number_input("Truck weight threshold (kg)", value=70)
     vehicle_vol_thr = st.sidebar.number_input("Truck volumetric threshold (kg)", value=150)
     vehicle_pieces_thr = st.sidebar.number_input("Truck pieces threshold", value=12)
     vehicle_kg_per_piece_thr = st.sidebar.number_input("Max kg/piece for Van", value=10)
@@ -857,6 +857,7 @@ def main():
             with open(f"{output_path}/route_summary_{timestamp}.xlsx", "rb") as f:
                 st.download_button("Route Summary", f, f"route_summary_{timestamp}.xlsx")
         with col2:
+            # FIXED LINE: Removed corrupted character
             with open(f"{output_path}/special_cases_{timestamp}.xlsx", "rb") as f:
                 st.download_button("Special Cases", f, f"special_cases_{timestamp}.xlsx")
         with col3:
@@ -928,7 +929,7 @@ def main():
             else:
                 st.write("No NGX shipments")
         with col14:
-            if os.path.exists(specialized_reports['KOP']):
+            if os.path.exists(specialized_reports['K极OP']):
                 with open(specialized_reports['KOP'], "rb") as f:
                     st.download_button("KOP Details", f, f"KOP_details_{timestamp}.xlsx",
                                       help="KP1 routes")
