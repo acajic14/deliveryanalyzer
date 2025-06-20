@@ -857,7 +857,7 @@ def main():
             with open(f"{output_path}/route_summary_{timestamp}.xlsx", "rb") as f:
                 st.download_button("Route Summary", f, f"route_summary_{timestamp}.xlsx")
         with col2:
-            with open(f"{output_path}/special_cases_{timestamp}.xlsx", "rb")极 as f:
+            with open(f"{output_path}/special_cases_{timestamp}.xlsx", "rb") as f:
                 st.download_button("Special Cases", f, f"special_cases_{timestamp}.xlsx")
         with col3:
             with open(f"{output_path}/matching_details_{timestamp}.xlsx", "rb") as f:
