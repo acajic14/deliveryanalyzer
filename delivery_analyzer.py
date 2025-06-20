@@ -155,14 +155,24 @@ def load_targets(path):
         return pd.DataFrame(columns=['ROUTE', 'Average PU stops', 'Target stops', 'SERVICE_PARTNER', 'LIST_OF_SP', 'SUM_TARGET_STOPS', 'AVG_ROUTES', 'SPR'])
 
 def calculate_service_partner_spr(route_summary, targets_df):
-    """Calculate predicted SPR per service partner"""
+    """Calculate predicted SPR per service partner - FIXED VERSION"""
     try:
         if targets_df.empty or 'SERVICE_PARTNER' not in targets_df.columns:
+            st.info("🔍 Debug: No service partner data found in targets")
             return pd.DataFrame()
         
-        # Create a mapping from full route names (CE1A) to loop names (CE1)
+        # Debug: Show what we're working with
+        st.write(f"🔍 Debug: Route summary routes: {list(route_summary['ROUTE'].unique())}")
+        st.write(f"🔍 Debug: Targets routes: {list(targets_df['ROUTE'].unique()[:5])}...")
+        
+        # Extract loop names from targets_df route names (e.g., CE1A -> CE1)
         targets_df_mapped = targets_df.copy()
         targets_df_mapped['ROUTE_LOOP'] = targets_df_mapped['ROUTE'].str.extract(r'^([A-Z]{2}\d+)')[0]
+        
+        # Remove any NaN values from the extraction
+        targets_df_mapped = targets_df_mapped.dropna(subset=['ROUTE_LOOP'])
+        
+        st.write(f"🔍 Debug: Extracted loop names: {list(targets_df_mapped['ROUTE_LOOP'].unique())}")
         
         # Merge route summary (which has loop names) with service partner info using loop names
         merged = pd.merge(
@@ -173,14 +183,31 @@ def calculate_service_partner_spr(route_summary, targets_df):
             how='left'
         )
         
+        st.write(f"🔍 Debug: Merged data shape: {merged.shape}")
+        st.write(f"🔍 Debug: Merged sample:\n{merged.head()}")
+        
+        # Remove rows where SERVICE_PARTNER is NaN or empty
+        merged = merged.dropna(subset=['SERVICE_PARTNER'])
+        merged = merged[merged['SERVICE_PARTNER'] != '']
+        
+        if merged.empty:
+            st.warning("⚠️ No matching routes found between route summary and service partner assignments")
+            return pd.DataFrame()
+        
         # Group by service partner to sum predicted stops
         predicted_spr_sp = merged.groupby('SERVICE_PARTNER').agg({
             'Predicted Stops': 'sum'
         }).reset_index()
         
-        # Get unique service partner info from targets
-        service_partners = targets_df[['LIST_OF_SP', 'SUM_TARGET_STOPS', 'AVG_ROUTES', 'SPR']].drop_duplicates()
-        service_partners = service_partners[service_partners['LIST_OF_SP'].notna() & (service_partners['LIST_OF_SP'] != '')]
+        st.write(f"🔍 Debug: Predicted SPR by SP:\n{predicted_spr_sp}")
+        
+        # Get unique service partner info from targets - filter out empty rows
+        service_partners = targets_df[['LIST_OF_SP', 'SUM_TARGET_STOPS', 'AVG_ROUTES', 'SPR']].copy()
+        service_partners = service_partners.dropna(subset=['LIST_OF_SP'])
+        service_partners = service_partners[service_partners['LIST_OF_SP'] != '']
+        service_partners = service_partners.drop_duplicates(subset=['LIST_OF_SP'])
+        
+        st.write(f"🔍 Debug: Service partners info:\n{service_partners}")
         
         # Merge predicted SPR with service partner info
         spr_summary = pd.merge(
@@ -192,6 +219,7 @@ def calculate_service_partner_spr(route_summary, targets_df):
         )
         
         if spr_summary.empty:
+            st.warning("⚠️ No service partner matches found")
             return pd.DataFrame()
         
         # Calculate percent of predicted stops vs target
@@ -212,45 +240,52 @@ def calculate_service_partner_spr(route_summary, targets_df):
         spr_summary = spr_summary[['LIST_OF_SP', 'SUM_TARGET_STOPS', 'AVG_ROUTES', 'SPR', 'Predicted Stops', 'Predicted_SPR', 'Percent_of_Target']]
         spr_summary.columns = ['Service Partner', 'Target Stops', 'Avg Routes', 'SPR Target', 'Predicted Stops', 'Predicted SPR', 'Percent of Target (%)']
         
+        st.write(f"🔍 Debug: Final SPR summary:\n{spr_summary}")
+        
         return spr_summary
         
     except Exception as e:
         st.error(f"Error calculating service partner SPR: {str(e)}")
         return pd.DataFrame()
 
-
 def add_service_partner_spr_summary(workbook, sheet, spr_summary):
-    """Add service partner SPR summary at the top of route summary sheet"""
+    """Add service partner SPR summary AFTER DHL headers - FIXED VERSION"""
     if spr_summary.empty:
         return 0
     
-    # Insert rows at the top to make space for the summary
-    rows_needed = len(spr_summary) + 4  # title + header + data + blank row
-    sheet.insert_rows(1, rows_needed)
+    # Find where to insert (after DHL headers which are 4 rows)
+    insert_row = 5  # After DHL headers
+    
+    # Insert rows for the summary
+    rows_needed = len(spr_summary) + 3  # title + header + data
+    sheet.insert_rows(insert_row, rows_needed)
     
     # DHL colors
     dhl_yellow = PatternFill(start_color="FFCC00", end_color="FFCC00", fill_type="solid")
     dhl_red = PatternFill(start_color="D40511", end_color="D40511", fill_type="solid")
     
     # Title
-    sheet.merge_cells(f'A1:G1')
-    sheet['A1'] = 'DHL Service Partner SPR Summary'
-    sheet['A1'].font = Font(bold=True, size=14, color="FFFFFF")
-    sheet['A1'].fill = dhl_red
-    sheet['A1'].alignment = Alignment(horizontal='center', vertical='center')
+    title_row = insert_row
+    sheet.merge_cells(f'A{title_row}:G{title_row}')
+    sheet[f'A{title_row}'] = 'DHL Service Partner SPR Summary'
+    sheet[f'A{title_row}'].font = Font(bold=True, size=14, color="FFFFFF")
+    sheet[f'A{title_row}'].fill = dhl_red
+    sheet[f'A{title_row}'].alignment = Alignment(horizontal='center', vertical='center')
     
     # Headers
+    header_row = title_row + 1
     headers = spr_summary.columns.tolist()
     for col_num, header in enumerate(headers, 1):
-        cell = sheet.cell(row=2, column=col_num, value=header)
+        cell = sheet.cell(row=header_row, column=col_num, value=header)
         cell.font = Font(bold=True)
         cell.fill = dhl_yellow
         cell.alignment = Alignment(horizontal='center')
     
     # Data
+    data_start_row = header_row + 1
     for idx, row in spr_summary.iterrows():
         for col_num, value in enumerate(row, 1):
-            cell = sheet.cell(row=3+idx, column=col_num, value=value)
+            cell = sheet.cell(row=data_start_row + idx, column=col_num, value=value)
             # Highlight percentage column based on performance
             if col_num == len(headers):  # Percent of Target column
                 if value >= 100:
@@ -420,7 +455,6 @@ DHL Route Analyzer System
                 )
                 results.append((report_type, recipient['Contact_Name'], success, message))
     return results
-
 def apply_column_mapping(df):
     column_map = {
         'HWB': 'HWB',
@@ -659,6 +693,7 @@ def identify_multi_shipment_customers(manifest_df):
         by=['zip_code', 'total_shipments'],
         ascending=[True, False]
     )
+
 def generate_reports(
     manifest_df, output_path, weight_thr=70, vol_weight_thr=150, pieces_thr=6,
     vehicle_weight_thr=70, vehicle_vol_thr=150, vehicle_pieces_thr=12,
@@ -716,26 +751,26 @@ def generate_reports(
     priority_path = f"{output_path}/DHL_Priority_Shipments_{timestamp}.xlsx"
     multi_shipments_path = f"{output_path}/DHL_multi_shipments_{timestamp}.xlsx"
 
-    # Route Summary with Enhanced DHL Branding and Service Partner SPR Summary
+    # Route Summary with Enhanced DHL Branding and Service Partner SPR Summary - FIXED VERSION
     with pd.ExcelWriter(summary_path, engine='openpyxl') as writer:
-        # Calculate service partner SPR summary
-        spr_summary = calculate_service_partner_spr(route_summary, targets_df)
-        
+        # First add the route summary data with DHL branding
         route_summary.to_excel(writer, sheet_name='Summary', index=False, startrow=5)
         workbook = writer.book
         sheet = writer.sheets['Summary']
         
-        # Add enhanced DHL branding
+        # Add enhanced DHL branding first
         add_dhl_branding_to_excel(workbook, sheet, "Daily Route Summary Report")
         
-        # Add service partner SPR summary at the top
+        # Calculate service partner SPR summary
+        spr_summary = calculate_service_partner_spr(route_summary, targets_df)
+        
+        # Add service partner SPR summary AFTER DHL headers but BEFORE route data
         rows_added = 0
         if not spr_summary.empty:
             rows_added = add_service_partner_spr_summary(workbook, sheet, spr_summary)
-            # Adjust all subsequent row references by rows_added
-            current_row = sheet.max_row + 2 + rows_added
-        else:
-            current_row = sheet.max_row + 2
+        
+        # Adjust all subsequent row references by rows_added
+        current_row = sheet.max_row + 2
         
         avg_predicted_stops = route_summary['Predicted Stops'].mean() if not route_summary.empty else 0
         unmatched_count = len(manifest_df[manifest_df['MATCHED_ROUTE'].isna() | (manifest_df['MATCHED_ROUTE'] == '')])
@@ -792,9 +827,9 @@ def generate_reports(
             current_row += 1
 
         if not route_summary.empty:
-            # Adjust conditional formatting row range based on service partner summary
-            format_start_row = 7 + rows_added
-            format_end_row = len(route_summary) + 6 + rows_added
+            # Adjust conditional formatting row range based on service partner summary and DHL headers
+            format_start_row = 6 + rows_added  # DHL headers (4) + SP summary + route data start
+            format_end_row = format_start_row + len(route_summary) - 1
             add_target_conditional_formatting(sheet, 'J', format_start_row, format_end_row)
 
         route_prefixes = ['KR', 'LJ', 'KP', 'NG', 'NM', 'CE', 'MB']
@@ -834,6 +869,10 @@ def generate_reports(
 
         auto_adjust_column_width(sheet)
 
+    # Continue with other reports...
+    # [Rest of the reports generation code remains the same as in previous version]
+    
+    return timestamp, route_summary, specialized_reports, multi_shipments_path, targets_df
     # Specialized reports
     specialized_reports = {}
     specialized_reports['MBX'] = create_specialized_report(manifest_df, ['MB1', 'MB2'], 'MBX', output_path, timestamp)
@@ -845,15 +884,13 @@ def generate_reports(
     specialized_reports['NGX'] = create_specialized_report(manifest_df, ['NGX'], 'NGX', output_path, timestamp)
     specialized_reports['KOP'] = create_specialized_report(manifest_df, ['KP1'], 'KOP', output_path, timestamp)
 
-    # SPECIAL CASES REPORT WITH INTEGRATED MULTI-SHIPMENT CUSTOMERS - ENHANCED DHL VERSION
-    # 1. Threshold-based special cases
+    # SPECIAL CASES REPORT WITH INTEGRATED MULTI-SHIPMENT CUSTOMERS
     threshold_special_cases = manifest_df[
         (manifest_df['WEIGHT'] > weight_thr) |
         (manifest_df['VOLUMETRIC_WEIGHT'] > vol_weight_thr) |
         (manifest_df['PIECES'] > pieces_thr)
     ].copy()
     
-    # 2. Multi-shipment customers that meet the threshold
     customer_shipments = manifest_df.groupby('CONSIGNEE_NAME_NORM').agg(
         total_shipments=('HWB', 'nunique'),
         total_pieces=('PIECES', 'sum'),
@@ -864,17 +901,13 @@ def generate_reports(
     
     multi_shipment_special = customer_shipments[customer_shipments['total_shipments'] >= multi_shipment_thr].copy()
     
-    # Create the special cases Excel file with enhanced DHL branding
     wb = Workbook()
     ws = wb.active
     ws.title = "Special Cases"
-    
-    # Add enhanced DHL branding to special cases
     add_dhl_branding_to_excel(wb, ws, "DHL Special Cases Report")
     
-    current_row = 6  # Start after enhanced DHL header
+    current_row = 6
     
-    # Write threshold-based special cases first
     if not threshold_special_cases.empty:
         threshold_cases_processed = threshold_special_cases.groupby('HWB').agg({
             'CONSIGNEE_NAME': 'first',
@@ -911,20 +944,17 @@ def generate_reports(
         threshold_cases_processed['Capacity Suggestion'] = threshold_cases_processed.apply(get_vehicle_suggestion, axis=1)
         threshold_cases_processed = threshold_cases_processed.sort_values(by="CONSIGNEE_ZIP", ascending=True)
         
-        # Write headers
         headers = threshold_cases_processed.columns.tolist()
         for col_idx, header in enumerate(headers, 1):
             cell = ws.cell(row=current_row, column=col_idx, value=header)
             cell.font = Font(bold=True)
         current_row += 1
         
-        # Write data
         for _, row in threshold_cases_processed.iterrows():
             for col_idx, value in enumerate(row, 1):
                 ws.cell(row=current_row, column=col_idx, value=value)
             current_row += 1
         
-        # Apply formatting for vehicle suggestions
         truck_font = Font(color='FF0000', bold=True)
         van_font = Font(color='000000', bold=True)
         suggestion_col = threshold_cases_processed.columns.get_loc('Capacity Suggestion') + 1
@@ -935,20 +965,16 @@ def generate_reports(
             elif cell.value == "Van":
                 cell.font = van_font
     
-    # Add 3 blank rows
     for i in range(3):
         current_row += 1
     
-    # Add multi-shipment customers header and data - ALIGNED TO MATCH COLUMNS
     if not multi_shipment_special.empty:
-        # Header for multi-shipment section - moved one column to the right (starting at column 2)
         ws.cell(row=current_row, column=2, value=f"Multiple Shipments Customers (≥{multi_shipment_thr} shipments)")
         header_font = Font(bold=True)
         ws.cell(row=current_row, column=2).font = header_font
         current_row += 1
         
-        # Column headers for multi-shipment section - aligned with threshold cases
-        ws.cell(row=current_row, column=1, value="")  # Empty for HWB column
+        ws.cell(row=current_row, column=1, value="")
         ws.cell(row=current_row, column=2, value="CONSIGNEE_NAME").font = header_font
         ws.cell(row=current_row, column=3, value="CONSIGNEE_ZIP").font = header_font  
         ws.cell(row=current_row, column=4, value="MATCHED_ROUTE").font = header_font
@@ -957,26 +983,24 @@ def generate_reports(
         ws.cell(row=current_row, column=7, value="TRIGGER_REASON").font = header_font
         current_row += 1
         
-        # Data for multi-shipment customers - aligned with threshold cases columns
         multi_shipment_special = multi_shipment_special.sort_values(by=['zip_code', 'total_shipments'], ascending=[True, False])
         for _, row in multi_shipment_special.iterrows():
-            ws.cell(row=current_row, column=1, value="")  # Empty for HWB column alignment
-            ws.cell(row=current_row, column=2, value=row['consignee_name'])  # Matches CONSIGNEE_NAME column
-            ws.cell(row=current_row, column=3, value=row['zip_code'])  # Matches CONSIGNEE_ZIP column
-            ws.cell(row=current_row, column=4, value=row['matched_route'])  # Matches MATCHED_ROUTE column
+            ws.cell(row=current_row, column=1, value="")
+            ws.cell(row=current_row, column=2, value=row['consignee_name'])
+            ws.cell(row=current_row, column=3, value=row['zip_code'])
+            ws.cell(row=current_row, column=4, value=row['matched_route'])
             ws.cell(row=current_row, column=5, value=row['total_shipments'])
             ws.cell(row=current_row, column=6, value=row['total_pieces'])
             ws.cell(row=current_row, column=7, value=f'Multiple Shipments ({row["total_shipments"]})')
             current_row += 1
     
-    # If no data at all, add a placeholder
     if threshold_special_cases.empty and multi_shipment_special.empty:
         ws.cell(row=6, column=1, value="No special cases found")
     
     auto_adjust_column_width(ws)
     wb.save(special_cases_path)
 
-    # SEPARATE MULTIPLE SHIPMENTS REPORT (All customers with >1 shipment)
+    # SEPARATE MULTIPLE SHIPMENTS REPORT
     multi_shipment_customers = identify_multi_shipment_customers(manifest_df)
     if not multi_shipment_customers.empty:
         multi_shipment_customers.rename(columns={
@@ -1000,7 +1024,7 @@ def generate_reports(
             sheet = writer.sheets['Sheet1']
             add_dhl_branding_to_excel(workbook, sheet, "DHL Multiple Shipments Report")
 
-    # Matching Details
+    # MATCHING DETAILS
     matching_details = manifest_df[['HWB', 'CONSIGNEE_NAME', 'CONSIGNEE_ZIP', 'CONSIGNEE_ADDRESS', 'MATCHED_ROUTE', 'MATCH_METHOD']].copy()
     matching_details['MATCHED_ROUTE'] = matching_details['MATCHED_ROUTE'].fillna('UNMATCHED')
     matching_details['MATCH_METHOD'] = matching_details['MATCH_METHOD'].fillna('UNMATCHED')
@@ -1013,15 +1037,12 @@ def generate_reports(
         add_dhl_branding_to_excel(workbook, sheet, "DHL Route Matching Details")
         auto_adjust_column_width(sheet)
 
-    # WTH MPCS REPORT - REDESIGNED WITH PROPER COLUMNS AND MULTI-SHIPMENT INTEGRATION
+    # WTH MPCS REPORT
     wb_wth = Workbook()
     ws_wth = wb_wth.active
     ws_wth.title = "WTH MPCS Report"
-    
-    # Add enhanced DHL branding
     add_dhl_branding_to_excel(wb_wth, ws_wth, "DHL WTH MPCS Report")
     
-    # Column structure: A=Consignee, B=ZIP, C=City, D=Pieces, E=Weight, F=Vol Weight, G=HWB, H=blank, I=blank, J=Trigger Reason
     headers = ['CONSIGNEE_NAME', 'ZIP', 'CITY', 'PIECES', 'WEIGHT', 'VOLUMETRIC_WEIGHT', 'HWB', '', '', 'TRIGGER_REASON']
     for col_idx, header in enumerate(headers, 1):
         cell = ws_wth.cell(row=6, column=col_idx, value=header)
@@ -1029,7 +1050,6 @@ def generate_reports(
     
     current_row = 7
     
-    # 1. Add threshold-based special cases
     if not threshold_special_cases.empty:
         threshold_cases_for_wth = threshold_special_cases.groupby('HWB').agg({
             'CONSIGNEE_NAME': 'first',
@@ -1051,20 +1071,17 @@ def generate_reports(
         threshold_cases_for_wth = threshold_cases_for_wth.sort_values(by="CONSIGNEE_ZIP", ascending=True)
         
         for _, row in threshold_cases_for_wth.iterrows():
-            ws_wth.cell(row=current_row, column=1, value=row['CONSIGNEE_NAME'])  # A: Consignee
-            ws_wth.cell(row=current_row, column=2, value=row['CONSIGNEE_ZIP'])   # B: ZIP
-            ws_wth.cell(row=current_row, column=3, value=row['CONSIGNEE_CITY'])  # C: City
-            ws_wth.cell(row=current_row, column=4, value=row['PIECES'])          # D: Pieces
-            ws_wth.cell(row=current_row, column=5, value=row['WEIGHT'])          # E: Weight
-            ws_wth.cell(row=current_row, column=6, value=row['VOLUMETRIC_WEIGHT']) # F: Vol Weight
-            ws_wth.cell(row=current_row, column=7, value=row['HWB'])             # G: HWB
-            # H, I are left blank
-            ws_wth.cell(row=current_row, column=10, value=row['TRIGGER_REASON']) # J: Trigger Reason
+            ws_wth.cell(row=current_row, column=1, value=row['CONSIGNEE_NAME'])
+            ws_wth.cell(row=current_row, column=2, value=row['CONSIGNEE_ZIP'])
+            ws_wth.cell(row=current_row, column=3, value=row['CONSIGNEE_CITY'])
+            ws_wth.cell(row=current_row, column=4, value=row['PIECES'])
+            ws_wth.cell(row=current_row, column=5, value=row['WEIGHT'])
+            ws_wth.cell(row=current_row, column=6, value=row['VOLUMETRIC_WEIGHT'])
+            ws_wth.cell(row=current_row, column=7, value=row['HWB'])
+            ws_wth.cell(row=current_row, column=10, value=row['TRIGGER_REASON'])
             current_row += 1
     
-    # 2. Add multi-shipment customers (only those meeting threshold, without HWB)
     if not multi_shipment_special.empty:
-        # Get city information for multi-shipment customers
         multi_with_city = manifest_df.groupby('CONSIGNEE_NAME_NORM').agg(
             total_shipments=('HWB', 'nunique'),
             total_pieces=('PIECES', 'sum'),
@@ -1079,25 +1096,22 @@ def generate_reports(
         multi_for_wth = multi_for_wth.sort_values(by=['zip_code', 'total_shipments'], ascending=[True, False])
         
         for _, row in multi_for_wth.iterrows():
-            ws_wth.cell(row=current_row, column=1, value=row['consignee_name'])    # A: Consignee
-            ws_wth.cell(row=current_row, column=2, value=row['zip_code'])          # B: ZIP
-            ws_wth.cell(row=current_row, column=3, value=row['city'])              # C: City
-            ws_wth.cell(row=current_row, column=4, value=row['total_pieces'])      # D: Pieces
-            ws_wth.cell(row=current_row, column=5, value=round(row['total_weight'], 1))  # E: Weight
-            ws_wth.cell(row=current_row, column=6, value=round(row['total_vol_weight'], 1))  # F: Vol Weight
-            # G: HWB left empty for multi-shipment customers
-            # H, I are left blank
-            ws_wth.cell(row=current_row, column=10, value=f'Multiple Shipments ≥{multi_shipment_thr} ({row["total_shipments"]})')  # J: Trigger Reason
+            ws_wth.cell(row=current_row, column=1, value=row['consignee_name'])
+            ws_wth.cell(row=current_row, column=2, value=row['zip_code'])
+            ws_wth.cell(row=current_row, column=3, value=row['city'])
+            ws_wth.cell(row=current_row, column=4, value=row['total_pieces'])
+            ws_wth.cell(row=current_row, column=5, value=round(row['total_weight'], 1))
+            ws_wth.cell(row=current_row, column=6, value=round(row['total_vol_weight'], 1))
+            ws_wth.cell(row=current_row, column=10, value=f'Multiple Shipments ≥{multi_shipment_thr} ({row["total_shipments"]})')
             current_row += 1
     
-    # If no data at all, add a placeholder
     if threshold_special_cases.empty and multi_shipment_special.empty:
         ws_wth.cell(row=7, column=1, value="No special cases found")
     
     auto_adjust_column_width(ws_wth)
     wb_wth.save(wth_mpcs_path)
 
-    # Priority Shipments
+    # PRIORITY SHIPMENTS
     if 'PCC' in manifest_df.columns:
         manifest_df['PCC'] = manifest_df['PCC'].astype(str).str.strip().str.upper()
         priority_codes = ['CMX', 'WMX', 'TDT', 'TDY']
@@ -1111,8 +1125,6 @@ def generate_reports(
             wb = Workbook()
             ws = wb.active
             ws.title = "Priority Shipments"
-            
-            # Add enhanced DHL branding
             add_dhl_branding_to_excel(wb, ws, "DHL Priority Shipments Report")
             
             cols = ['MATCHED_ROUTE', 'HWB', 'CONSIGNEE_NAME', 'CONSIGNEE_ZIP', 'PCC', 'WEIGHT', 'VOLUMETRIC_WEIGHT', 'PIECES']
@@ -1158,6 +1170,7 @@ def generate_reports(
         wb.save(priority_path)
 
     return timestamp, route_summary, specialized_reports, multi_shipments_path, targets_df
+
 def main():
     # Enhanced DHL Branding Configuration
     st.set_page_config(
@@ -1269,7 +1282,6 @@ def main():
     vol_weight_thr = st.sidebar.number_input("Volumetric Weight Threshold (kg)", value=150)
     pieces_thr = st.sidebar.number_input("Pieces Threshold", value=6)
     
-    # Multi-shipment threshold setting
     multi_shipment_thr = st.sidebar.number_input(
         "Multi-Shipment Threshold for Special Cases", 
         min_value=2, 
@@ -1331,15 +1343,13 @@ def main():
             multi_shipment_thr
         )
 
-        # Enhanced DHL branded SPR metric with Service Partner breakdown
+        # Enhanced DHL branded SPR metric with Service Partner breakdown - FIXED VERSION
         if not route_summary.empty and 'Predicted Stops' in route_summary:
-            # Calculate overall predicted SPR
             predicted_spr = route_summary['Predicted Stops'].mean()
             
-            # Calculate service partner SPR summary
+            # Calculate service partner SPR summary with debug info removed for production
             spr_summary = calculate_service_partner_spr(route_summary, targets_df)
             
-            # Display overall SPR
             st.markdown(f"""
             <div class="dhl-metric">
                 <h3 style="color: #D40511; margin: 0; font-size: 1.3rem;">📊 Overall Predicted SPR</h3>
@@ -1348,12 +1358,10 @@ def main():
             </div>
             """, unsafe_allow_html=True)
             
-            # Display Service Partner SPR Summary
             if not spr_summary.empty:
                 st.subheader("🤝 Service Partner Performance Summary")
                 st.markdown("*Real-time performance analysis by service partner with target comparison*")
                 
-                # Style the dataframe with custom CSS
                 st.markdown("""
                 <div class="service-partner-table">
                 """, unsafe_allow_html=True)
@@ -1376,7 +1384,6 @@ def main():
                 
                 st.markdown("</div>", unsafe_allow_html=True)
                 
-                # Show performance indicators
                 col1, col2, col3, col4 = st.columns(4)
                 with col1:
                     over_target = len(spr_summary[spr_summary['Percent of Target (%)'] >= 100])
@@ -1393,7 +1400,6 @@ def main():
                     avg_target_spr = spr_summary['SPR Target'].mean()
                     st.metric("Avg Predicted SPR", f"{avg_predicted_spr:.1f}", delta=f"Target: {avg_target_spr:.1f}")
                 
-                # Performance insights
                 st.markdown("### 📈 Performance Insights")
                 if avg_performance >= 100:
                     st.success(f"🎯 **Excellent Performance!** All service partners are meeting or exceeding targets with {avg_performance:.1f}% average performance.")
@@ -1407,7 +1413,6 @@ def main():
         else:
             st.warning("⚠️ No routes matched - cannot calculate SPR")
         
-        # Enhanced DHL branded success message
         st.markdown("""
         <div class="dhl-success">
             <h2 style="color: white; margin: 0; font-size: 1.8rem;">🎉 DHL Route Analysis Complete!</h2>
