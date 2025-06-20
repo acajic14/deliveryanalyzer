@@ -112,12 +112,149 @@ def load_targets(path):
     try:
         if not os.path.exists(path):
             st.warning(f"⚠️ Targets file not found: {path}")
-            return pd.DataFrame(columns=['ROUTE', 'Average PU stops', 'Target stops'])
+            return pd.DataFrame(columns=['ROUTE', 'Average PU stops', 'Target stops', 'SERVICE_PARTNER', 'LIST_OF_SP', 'SUM_TARGET_STOPS', 'AVG_ROUTES', 'SPR'])
         
-        return pd.read_excel(path, usecols="A:C", names=['ROUTE', 'Average PU stops', 'Target stops'])
+        # Load all columns from targets file
+        df = pd.read_excel(path)
+        
+        # Create a mapping for the columns we need
+        if len(df.columns) >= 11:  # Ensure we have enough columns
+            # Rename columns based on your description
+            new_columns = {}
+            if len(df.columns) > 0: new_columns[df.columns[0]] = 'ROUTE'           # Column A
+            if len(df.columns) > 1: new_columns[df.columns[1]] = 'Average PU stops' # Column B
+            if len(df.columns) > 2: new_columns[df.columns[2]] = 'Target stops'     # Column C
+            if len(df.columns) > 4: new_columns[df.columns[4]] = 'SERVICE_PARTNER'  # Column E
+            if len(df.columns) > 7: new_columns[df.columns[7]] = 'LIST_OF_SP'      # Column H
+            if len(df.columns) > 8: new_columns[df.columns[8]] = 'SUM_TARGET_STOPS' # Column I
+            if len(df.columns) > 9: new_columns[df.columns[9]] = 'AVG_ROUTES'      # Column J
+            if len(df.columns) > 10: new_columns[df.columns[10]] = 'SPR'           # Column K
+            
+            df = df.rename(columns=new_columns)
+        else:
+            # Fallback to original structure if not enough columns
+            df.columns = ['ROUTE', 'Average PU stops', 'Target stops']
+            df['SERVICE_PARTNER'] = ''
+            df['LIST_OF_SP'] = ''
+            df['SUM_TARGET_STOPS'] = 0
+            df['AVG_ROUTES'] = 0
+            df['SPR'] = 0
+        
+        # Clean and convert data types
+        for col in ['SUM_TARGET_STOPS', 'AVG_ROUTES']:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+        
+        if 'SPR' in df.columns:
+            df['SPR'] = pd.to_numeric(df['SPR'], errors='coerce').fillna(0)
+        
+        return df
+        
     except Exception as e:
         st.warning(f"⚠️ Couldn't load targets.xlsx: {str(e)}")
-        return pd.DataFrame(columns=['ROUTE', 'Average PU stops', 'Target stops'])
+        return pd.DataFrame(columns=['ROUTE', 'Average PU stops', 'Target stops', 'SERVICE_PARTNER', 'LIST_OF_SP', 'SUM_TARGET_STOPS', 'AVG_ROUTES', 'SPR'])
+
+def calculate_service_partner_spr(route_summary, targets_df):
+    """Calculate predicted SPR per service partner"""
+    try:
+        if targets_df.empty or 'SERVICE_PARTNER' not in targets_df.columns:
+            return pd.DataFrame()
+        
+        # Merge route summary with service partner info
+        merged = pd.merge(
+            route_summary[['ROUTE', 'Predicted Stops']], 
+            targets_df[['ROUTE', 'SERVICE_PARTNER']], 
+            on='ROUTE', 
+            how='left'
+        )
+        
+        # Group by service partner to sum predicted stops
+        predicted_spr_sp = merged.groupby('SERVICE_PARTNER').agg({
+            'Predicted Stops': 'sum'
+        }).reset_index()
+        
+        # Get unique service partner info from targets
+        service_partners = targets_df[['LIST_OF_SP', 'SUM_TARGET_STOPS', 'AVG_ROUTES', 'SPR']].drop_duplicates()
+        service_partners = service_partners[service_partners['LIST_OF_SP'].notna() & (service_partners['LIST_OF_SP'] != '')]
+        
+        # Merge predicted SPR with service partner info
+        spr_summary = pd.merge(
+            service_partners, 
+            predicted_spr_sp, 
+            left_on='LIST_OF_SP', 
+            right_on='SERVICE_PARTNER', 
+            how='left'
+        )
+        
+        if spr_summary.empty:
+            return pd.DataFrame()
+        
+        # Calculate percent of predicted stops vs target
+        spr_summary['Percent_of_Target'] = (spr_summary['Predicted Stops'] / spr_summary['SUM_TARGET_STOPS']) * 100
+        
+        # Calculate predicted SPR per service partner
+        spr_summary['Predicted_SPR'] = spr_summary['Predicted Stops'] / spr_summary['AVG_ROUTES']
+        
+        # Round values for display
+        spr_summary['Predicted Stops'] = spr_summary['Predicted Stops'].fillna(0).round(1)
+        spr_summary['Percent_of_Target'] = spr_summary['Percent_of_Target'].fillna(0).round(1)
+        spr_summary['Predicted_SPR'] = spr_summary['Predicted_SPR'].fillna(0).round(1)
+        spr_summary['SUM_TARGET_STOPS'] = spr_summary['SUM_TARGET_STOPS'].fillna(0).astype(int)
+        spr_summary['AVG_ROUTES'] = spr_summary['AVG_ROUTES'].fillna(0).astype(int)
+        spr_summary['SPR'] = spr_summary['SPR'].fillna(0).round(1)
+        
+        # Clean up columns
+        spr_summary = spr_summary[['LIST_OF_SP', 'SUM_TARGET_STOPS', 'AVG_ROUTES', 'SPR', 'Predicted Stops', 'Predicted_SPR', 'Percent_of_Target']]
+        spr_summary.columns = ['Service Partner', 'Target Stops', 'Avg Routes', 'SPR Target', 'Predicted Stops', 'Predicted SPR', 'Percent of Target (%)']
+        
+        return spr_summary
+        
+    except Exception as e:
+        st.error(f"Error calculating service partner SPR: {str(e)}")
+        return pd.DataFrame()
+
+def add_service_partner_spr_summary(workbook, sheet, spr_summary):
+    """Add service partner SPR summary at the top of route summary sheet"""
+    if spr_summary.empty:
+        return 0
+    
+    # Insert rows at the top to make space for the summary
+    rows_needed = len(spr_summary) + 4  # title + header + data + blank row
+    sheet.insert_rows(1, rows_needed)
+    
+    # DHL colors
+    dhl_yellow = PatternFill(start_color="FFCC00", end_color="FFCC00", fill_type="solid")
+    dhl_red = PatternFill(start_color="D40511", end_color="D40511", fill_type="solid")
+    
+    # Title
+    sheet.merge_cells(f'A1:G1')
+    sheet['A1'] = 'DHL Service Partner SPR Summary'
+    sheet['A1'].font = Font(bold=True, size=14, color="FFFFFF")
+    sheet['A1'].fill = dhl_red
+    sheet['A1'].alignment = Alignment(horizontal='center', vertical='center')
+    
+    # Headers
+    headers = spr_summary.columns.tolist()
+    for col_num, header in enumerate(headers, 1):
+        cell = sheet.cell(row=2, column=col_num, value=header)
+        cell.font = Font(bold=True)
+        cell.fill = dhl_yellow
+        cell.alignment = Alignment(horizontal='center')
+    
+    # Data
+    for idx, row in spr_summary.iterrows():
+        for col_num, value in enumerate(row, 1):
+            cell = sheet.cell(row=3+idx, column=col_num, value=value)
+            # Highlight percentage column based on performance
+            if col_num == len(headers):  # Percent of Target column
+                if value >= 100:
+                    cell.font = Font(color="008000", bold=True)  # Green for over target
+                elif value >= 90:
+                    cell.font = Font(color="FFA500", bold=True)  # Orange for close to target
+                else:
+                    cell.font = Font(color="FF0000", bold=True)  # Red for under target
+    
+    return rows_needed
 
 def parse_pieces(value):
     try:
@@ -573,8 +710,11 @@ def generate_reports(
     priority_path = f"{output_path}/DHL_Priority_Shipments_{timestamp}.xlsx"
     multi_shipments_path = f"{output_path}/DHL_multi_shipments_{timestamp}.xlsx"
 
-    # Route Summary with Enhanced DHL Branding
+    # Route Summary with Enhanced DHL Branding and Service Partner SPR Summary
     with pd.ExcelWriter(summary_path, engine='openpyxl') as writer:
+        # Calculate service partner SPR summary
+        spr_summary = calculate_service_partner_spr(route_summary, targets_df)
+        
         route_summary.to_excel(writer, sheet_name='Summary', index=False, startrow=5)
         workbook = writer.book
         sheet = writer.sheets['Summary']
@@ -582,10 +722,18 @@ def generate_reports(
         # Add enhanced DHL branding
         add_dhl_branding_to_excel(workbook, sheet, "Daily Route Summary Report")
         
+        # Add service partner SPR summary at the top
+        rows_added = 0
+        if not spr_summary.empty:
+            rows_added = add_service_partner_spr_summary(workbook, sheet, spr_summary)
+            # Adjust all subsequent row references by rows_added
+            current_row = sheet.max_row + 2 + rows_added
+        else:
+            current_row = sheet.max_row + 2
+        
         avg_predicted_stops = route_summary['Predicted Stops'].mean() if not route_summary.empty else 0
         unmatched_count = len(manifest_df[manifest_df['MATCHED_ROUTE'].isna() | (manifest_df['MATCHED_ROUTE'] == '')])
         
-        current_row = sheet.max_row + 2
         sheet.cell(row=current_row, column=1, value="Average Predicted Stops")
         sheet.cell(row=current_row, column=2, value=round(avg_predicted_stops, 1))
         current_row += 1
@@ -638,7 +786,10 @@ def generate_reports(
             current_row += 1
 
         if not route_summary.empty:
-            add_target_conditional_formatting(sheet, 'J', 7, len(route_summary)+6)
+            # Adjust conditional formatting row range based on service partner summary
+            format_start_row = 7 + rows_added
+            format_end_row = len(route_summary) + 6 + rows_added
+            add_target_conditional_formatting(sheet, 'J', format_start_row, format_end_row)
 
         route_prefixes = ['KR', 'LJ', 'KP', 'NG', 'NM', 'CE', 'MB']
         for prefix in route_prefixes:
@@ -1000,7 +1151,7 @@ def generate_reports(
         ws.cell(row=6, column=1, value="No PCC data available")
         wb.save(priority_path)
 
-    return timestamp, route_summary, specialized_reports, multi_shipments_path
+    return timestamp, route_summary, specialized_reports, multi_shipments_path, targets_df
 def main():
     # Enhanced DHL Branding Configuration
     st.set_page_config(
@@ -1071,6 +1222,13 @@ def main():
         border-radius: 10px;
         margin-top: 2rem;
         box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    .service-partner-table {
+        background: white;
+        border-radius: 10px;
+        padding: 1rem;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        margin: 1rem 0;
     }
     </style>
     """, unsafe_allow_html=True)
@@ -1159,7 +1317,7 @@ def main():
         
         output_path = "output"
         os.makedirs(output_path, exist_ok=True)
-        timestamp, route_summary, specialized_reports, multi_shipments_path = generate_reports(
+        timestamp, route_summary, specialized_reports, multi_shipments_path, targets_df = generate_reports(
             matched_manifest, output_path,
             weight_thr, vol_weight_thr, pieces_thr,
             vehicle_weight_thr, vehicle_vol_thr,
@@ -1167,16 +1325,79 @@ def main():
             multi_shipment_thr
         )
 
-        # Enhanced DHL branded SPR metric
+        # Enhanced DHL branded SPR metric with Service Partner breakdown
         if not route_summary.empty and 'Predicted Stops' in route_summary:
+            # Calculate overall predicted SPR
             predicted_spr = route_summary['Predicted Stops'].mean()
+            
+            # Calculate service partner SPR summary
+            spr_summary = calculate_service_partner_spr(route_summary, targets_df)
+            
+            # Display overall SPR
             st.markdown(f"""
             <div class="dhl-metric">
-                <h3 style="color: #D40511; margin: 0; font-size: 1.3rem;">📊 Predicted SPR (Stops Per Route)</h3>
+                <h3 style="color: #D40511; margin: 0; font-size: 1.3rem;">📊 Overall Predicted SPR</h3>
                 <h1 style="color: #D40511; margin: 0.5rem 0; font-size: 2.5rem;">{predicted_spr:.1f}</h1>
-                <p style="margin: 0; color: #666; font-style: italic;">Average Predicted Stops - Excellence in Route Planning</p>
+                <p style="margin: 0; color: #666; font-style: italic;">Average Predicted Stops Per Route</p>
             </div>
             """, unsafe_allow_html=True)
+            
+            # Display Service Partner SPR Summary
+            if not spr_summary.empty:
+                st.subheader("🤝 Service Partner Performance Summary")
+                st.markdown("*Real-time performance analysis by service partner with target comparison*")
+                
+                # Style the dataframe with custom CSS
+                st.markdown("""
+                <div class="service-partner-table">
+                """, unsafe_allow_html=True)
+                
+                st.dataframe(
+                    spr_summary.style.format({
+                        'Target Stops': '{:,}',
+                        'Predicted Stops': '{:,.1f}',
+                        'Predicted SPR': '{:.1f}',
+                        'SPR Target': '{:.1f}',
+                        'Percent of Target (%)': '{:.1f}%'
+                    }).applymap(
+                        lambda x: 'color: green; font-weight: bold' if isinstance(x, (int, float)) and x >= 100 
+                        else 'color: orange; font-weight: bold' if isinstance(x, (int, float)) and 90 <= x < 100
+                        else 'color: red; font-weight: bold' if isinstance(x, (int, float)) and x < 90
+                        else '', subset=['Percent of Target (%)']
+                    ), 
+                    use_container_width=True
+                )
+                
+                st.markdown("</div>", unsafe_allow_html=True)
+                
+                # Show performance indicators
+                col1, col2, col3, col4 = st.columns(4)
+                with col1:
+                    over_target = len(spr_summary[spr_summary['Percent of Target (%)'] >= 100])
+                    st.metric("Partners Over Target", over_target, delta=f"of {len(spr_summary)}")
+                with col2:
+                    avg_performance = spr_summary['Percent of Target (%)'].mean()
+                    st.metric("Average Performance", f"{avg_performance:.1f}%")
+                with col3:
+                    total_predicted = spr_summary['Predicted Stops'].sum()
+                    total_target = spr_summary['Target Stops'].sum()
+                    st.metric("Total Predicted Stops", f"{total_predicted:.0f}", delta=f"Target: {total_target}")
+                with col4:
+                    avg_predicted_spr = spr_summary['Predicted SPR'].mean()
+                    avg_target_spr = spr_summary['SPR Target'].mean()
+                    st.metric("Avg Predicted SPR", f"{avg_predicted_spr:.1f}", delta=f"Target: {avg_target_spr:.1f}")
+                
+                # Performance insights
+                st.markdown("### 📈 Performance Insights")
+                if avg_performance >= 100:
+                    st.success(f"🎯 **Excellent Performance!** All service partners are meeting or exceeding targets with {avg_performance:.1f}% average performance.")
+                elif avg_performance >= 90:
+                    st.warning(f"⚠️ **Good Performance** with room for improvement. Average performance: {avg_performance:.1f}%")
+                else:
+                    st.error(f"🚨 **Performance Below Target** - Average performance: {avg_performance:.1f}%. Review capacity and route optimization.")
+                
+            else:
+                st.info("ℹ️ Service Partner SPR data not available. Please ensure your targets.xlsx file includes service partner information in columns E, H, I, J, and K.")
         else:
             st.warning("⚠️ No routes matched - cannot calculate SPR")
         
@@ -1185,7 +1406,7 @@ def main():
         <div class="dhl-success">
             <h2 style="color: white; margin: 0; font-size: 1.8rem;">🎉 DHL Route Analysis Complete!</h2>
             <p style="color: white; margin: 0.5rem 0 0 0; font-size: 1.1rem; font-style: italic;">Excellence. Simply delivered.</p>
-            <p style="color: white; margin: 0.5rem 0 0 0; font-size: 0.9rem;">All reports generated successfully with DHL branding</p>
+            <p style="color: white; margin: 0.5rem 0 0 0; font-size: 0.9rem;">All reports generated successfully with DHL branding and Service Partner analysis</p>
         </div>
         """, unsafe_allow_html=True)
         
@@ -1229,12 +1450,12 @@ def main():
         
         # Enhanced Standard Reports Section
         st.subheader("📊 DHL Standard Reports")
-        st.markdown("*Professional reports with enhanced DHL branding and 'Excellence. Simply delivered.' tagline*")
+        st.markdown("*Professional reports with enhanced DHL branding, Service Partner SPR summary, and 'Excellence. Simply delivered.' tagline*")
         col1, col2, col3 = st.columns(3)
         with col1:
             with open(f"{output_path}/DHL_route_summary_{timestamp}.xlsx", "rb") as f:
                 st.download_button("📋 Route Summary", f, f"DHL_route_summary_{timestamp}.xlsx",
-                                  help="Complete route analysis with DHL branding")
+                                  help="Complete route analysis with DHL branding and Service Partner SPR summary")
         with col2:
             with open(f"{output_path}/DHL_special_cases_{timestamp}.xlsx", "rb") as f:
                 st.download_button("⚠️ Special Cases", f, f"DHL_special_cases_{timestamp}.xlsx",
