@@ -736,7 +736,7 @@ def generate_reports(
     priority_path = f"{output_path}/DHL_Priority_Shipments_{timestamp}.xlsx"
     multi_shipments_path = f"{output_path}/DHL_multi_shipments_{timestamp}.xlsx"
 
-    # Route Summary with Enhanced DHL Branding and Service Partner SPR Summary
+    # 1. ROUTE SUMMARY REPORT
     try:
         st.write("📊 Creating route summary report...")
         with pd.ExcelWriter(summary_path, engine='openpyxl') as writer:
@@ -853,7 +853,7 @@ def generate_reports(
     except Exception as e:
         st.error(f"❌ Failed to create route summary: {str(e)}")
 
-    # SPECIALIZED REPORTS - MOVED BEFORE RETURN STATEMENT
+    # 2. SPECIALIZED REPORTS
     st.write("🚛 Creating specialized route reports...")
     specialized_reports['MBX'] = create_specialized_report(manifest_df, ['MB1', 'MB2'], 'MBX', output_path, timestamp)
     specialized_reports['KRA'] = create_specialized_report(manifest_df, ['KR1', 'KR2'], 'KRA', output_path, timestamp)
@@ -864,9 +864,7 @@ def generate_reports(
     specialized_reports['NGX'] = create_specialized_report(manifest_df, ['NGX'], 'NGX', output_path, timestamp)
     specialized_reports['KOP'] = create_specialized_report(manifest_df, ['KP1'], 'KOP', output_path, timestamp)
 
-    # Continue with remaining reports...
-    return timestamp, route_summary, specialized_reports, multi_shipments_path, targets_df
-    # SPECIAL CASES REPORT - STANDARDIZED WITH pd.ExcelWriter
+    # 3. SPECIAL CASES REPORT
     try:
         st.write("⚠️ Creating special cases report...")
         threshold_special_cases = manifest_df[
@@ -983,7 +981,7 @@ def generate_reports(
     except Exception as e:
         st.error(f"❌ Failed to create special cases report: {str(e)}")
 
-    # SEPARATE MULTIPLE SHIPMENTS REPORT - STANDARDIZED
+    # 4. MULTIPLE SHIPMENTS REPORT
     try:
         st.write("📊 Creating multiple shipments report...")
         multi_shipment_customers = identify_multi_shipment_customers(manifest_df)
@@ -1012,7 +1010,7 @@ def generate_reports(
     except Exception as e:
         st.error(f"❌ Failed to create multiple shipments report: {str(e)}")
 
-    # MATCHING DETAILS - STANDARDIZED
+    # 5. MATCHING DETAILS
     try:
         st.write("🔍 Creating matching details report...")
         matching_details = manifest_df[['HWB', 'CONSIGNEE_NAME', 'CONSIGNEE_ZIP', 'CONSIGNEE_ADDRESS', 'MATCHED_ROUTE', 'MATCH_METHOD']].copy()
@@ -1030,7 +1028,7 @@ def generate_reports(
     except Exception as e:
         st.error(f"❌ Failed to create matching details report: {str(e)}")
 
-    # WTH MPCS REPORT - STANDARDIZED
+    # 6. WTH MPCS REPORT
     try:
         st.write("📦 Creating WTH MPCS report...")
         
@@ -1110,7 +1108,7 @@ def generate_reports(
     except Exception as e:
         st.error(f"❌ Failed to create WTH MPCS report: {str(e)}")
 
-    # PRIORITY SHIPMENTS - STANDARDIZED
+    # 7. PRIORITY SHIPMENTS
     try:
         st.write("🚨 Creating priority shipments report...")
         if 'PCC' in manifest_df.columns:
@@ -1184,8 +1182,8 @@ def generate_reports(
     except Exception as e:
         st.error(f"❌ Failed to create priority shipments report: {str(e)}")
 
+    # RETURN ALL RESULTS - THIS IS THE ONLY RETURN STATEMENT IN THE FUNCTION
     return timestamp, route_summary, specialized_reports, multi_shipments_path, targets_df
-
 def main():
     # Enhanced DHL Branding Configuration
     st.set_page_config(
