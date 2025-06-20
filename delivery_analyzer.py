@@ -19,7 +19,7 @@ from openpyxl.formatting.rule import CellIsRule
 import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.base import MIMEBase
-from email.mime.text import MIMEText
+from email.mime.text import MIMETText
 from email import encoders
 
 # --- Helper functions ---
@@ -118,17 +118,14 @@ def clean_nan_from_address(addr):
 
 # --- EMAIL FUNCTIONS ---
 def load_email_mapping(path):
-    """Load email mapping from Excel file"""
     try:
-        df = pd.read_excel(path)
-        return df
+        return pd.read_excel(path)
     except Exception as e:
         st.warning(f"Couldn't load email mapping: {str(e)}")
         return pd.DataFrame()
 
 def send_email_with_attachment(smtp_server, smtp_port, sender_email, sender_password, 
                               recipient_email, contact_name, subject, body, attachment_path):
-    """Send email with Excel attachment"""
     try:
         msg = MIMEMultipart()
         msg['From'] = sender_email
@@ -162,8 +159,6 @@ def send_email_with_attachment(smtp_server, smtp_port, sender_email, sender_pass
 
 def send_route_reports(route_summary, specialized_reports, email_mapping, output_path, timestamp,
                       smtp_server, smtp_port, sender_email, sender_password):
-    """Send specialized reports to designated recipients"""
-    
     results = []
     
     email_routes = {
@@ -222,7 +217,6 @@ Delivery Route Analyzer System
 
 # --- MULTIPLE FILE PROCESSING ---
 def apply_column_mapping(df):
-    """Apply column mapping logic to a single dataframe"""
     column_map = {
         'HWB': 'HWB',
         '# Pcs\\Tot Pcs': 'PIECES',
@@ -274,30 +268,25 @@ def apply_column_mapping(df):
     return new_df
 
 def process_multiple_manifests(uploaded_files):
-    """Process and merge multiple manifest files with header handling"""
     all_dataframes = []
     
     for i, file in enumerate(uploaded_files):
         st.write(f"Processing file {i+1}/{len(uploaded_files)}: {file.name}")
         
         try:
-            # Read file with proper header handling
             if file.name.endswith(('.xlsx', '.xls')):
                 df = pd.read_excel(file, header=0)
             else:
                 df = pd.read_csv(file, delimiter=',', quotechar='"', 
                                engine='python', header=0, dtype=str)
             
-            # Apply column mapping
             df = apply_column_mapping(df)
             
             if not df.empty:
-                # Remove any rows that might be headers
                 df = df[df['HWB'] != 'HWB']
                 df = df[df['HWB'].notna()]
                 df = df[df['HWB'] != '']
                 
-                # Add source file info
                 df['SOURCE_FILE'] = file.name
                 df['FILE_ORDER'] = i + 1
                 all_dataframes.append(df)
@@ -313,21 +302,17 @@ def process_multiple_manifests(uploaded_files):
         st.error("No valid data found in any uploaded files")
         return pd.DataFrame()
     
-    # Merge all dataframes
     merged_df = pd.concat(all_dataframes, ignore_index=True)
     
-    # Final cleanup
     merged_df = merged_df[merged_df['HWB'] != 'HWB']
     merged_df = merged_df[merged_df['CONSIGNEE_NAME'] != 'Cnee Nm']
     merged_df = merged_df.reset_index(drop=True)
     
-    # Show merge summary
     st.success(f"🎉 **Merge Complete!**")
     st.write(f"- **Total rows:** {len(merged_df)}")
     st.write(f"- **Files merged:** {len(all_dataframes)}")
     st.write(f"- **Unique HWBs:** {merged_df['HWB'].nunique()}")
     
-    # Show file breakdown
     with st.expander("📊 File Breakdown"):
         file_summary = merged_df.groupby('SOURCE_FILE').agg({
             'HWB': 'count',
@@ -340,7 +325,6 @@ def process_multiple_manifests(uploaded_files):
     return merged_df
 
 def process_manifest(file):
-    """Process single manifest file (legacy function for single file upload)"""
     try:
         if file.name.endswith(('.xlsx', '.xls')):
             df = pd.read_excel(file)
@@ -382,7 +366,7 @@ def match_address_to_route(manifest_df, street_city_routes, fallback_routes):
                     for matched_street, score, _ in matches:
                         best_match = city_matches[city_matches['STREET_CLEAN'] == matched_street].iloc[0]
                         manifest_df.at[idx, 'MATCHED_ROUTE'] = best_match['ROUTE']
-                        manifest_df.at[idx, 'MATCH_METHOD'] = 'Street-City'
+                        manifest_df.at[idx, 'MATCH_METHOD'] = 'Street-CCity'
                         manifest_df.at[idx, 'MATCH_SCORE'] = float(score)
                         matched = True
                         break
@@ -422,7 +406,6 @@ def add_target_conditional_formatting(sheet, col_letter, start_row, end_row):
         CellIsRule(operator='between', formula=['0', '5'], font=green_font))
 
 def auto_adjust_column_width(worksheet):
-    """Auto-adjust column widths for better readability"""
     for column in worksheet.columns:
         max_length = 0
         column_letter = column[0].column_letter
@@ -436,7 +419,6 @@ def auto_adjust_column_width(worksheet):
         worksheet.column_dimensions[column_letter].width = adjusted_width
 
 def create_specialized_report(manifest_df, route_prefixes, report_name, output_path, timestamp):
-    """Create specialized report for specific route prefixes with MATCHED_ROUTE first"""
     filtered_data = manifest_df[
         manifest_df['MATCHED_ROUTE'].str.startswith(tuple(route_prefixes), na=False)
     ].copy()
@@ -454,6 +436,19 @@ def create_specialized_report(manifest_df, route_prefixes, report_name, output_p
         pd.DataFrame(columns=['MATCHED_ROUTE', 'HWB', 'CONSIGNEE_NAME', 'CONSIGNEE_ADDRESS', 'CONSIGNEE_ZIP']).to_excel(report_path, index=False)
     
     return report_path
+
+# --- NEW FEATURE: MULTI-SHIPMENT CUSTOMERS ---
+def identify_multi_shipment_customers(manifest_df):
+    customer_shipments = manifest_df.groupby('CONSIGNEE_NAME_NORM').agg(
+        total_shipments=('HWB', 'nunique'),
+        total_pieces=('PIECES', 'sum'),
+        zip_code=('CONSIGNEE_ZIP', 'first')
+    ).reset_index()
+    multi_shipment_customers = customer_shipments[customer_shipments['total_shipments'] > 1]
+    return multi_shipment_customers.sort_values(
+        by=['zip_code', 'total_shipments'],
+        ascending=[True, False]
+    )
 
 def generate_reports(
     manifest_df, output_path, weight_thr=70, vol_weight_thr=150, pieces_thr=6,
@@ -502,7 +497,7 @@ def generate_reports(
     wth_mpcs_path = f"{output_path}/WTH_MPCS_Report_{timestamp}.xlsx"
     priority_path = f"{output_path}/Priority_Shipments_{timestamp}.xlsx"
 
-    # Route Summary with ZIP Statistics and Multiple Sheets
+    # Route Summary
     with pd.ExcelWriter(summary_path, engine='openpyxl') as writer:
         route_summary.to_excel(writer, sheet_name='Summary', index=False)
         sheet = writer.sheets['Summary']
@@ -544,7 +539,6 @@ def generate_reports(
             sheet.cell(row=current_row, column=4, value=ratio)
             current_row += 1
 
-        # ZIP Code Statistics
         zip_stats = manifest_df.groupby('CONSIGNEE_ZIP').agg(
             total_shipments=('HWB', 'nunique'),
             unique_consignees=('CONSIGNEE_NAME_NORM', 'nunique')
@@ -565,7 +559,6 @@ def generate_reports(
 
         add_target_conditional_formatting(sheet, 'J', 2, len(route_summary)+1)
 
-        # Add route prefix sheets
         route_prefixes = ['KR', 'LJ', 'KP', 'NG', 'NM', 'CE', 'MB']
         for prefix in route_prefixes:
             prefix_data = manifest_df[
@@ -598,7 +591,7 @@ def generate_reports(
 
         auto_adjust_column_width(sheet)
 
-    # Generate specialized reports
+    # Specialized reports
     specialized_reports = {}
     specialized_reports['MBX'] = create_specialized_report(manifest_df, ['MB1', 'MB2'], 'MBX', output_path, timestamp)
     specialized_reports['KRA'] = create_specialized_report(manifest_df, ['KR1', 'KR2'], 'KRA', output_path, timestamp)
@@ -609,13 +602,20 @@ def generate_reports(
     specialized_reports['NGX'] = create_specialized_report(manifest_df, ['NGX'], 'NGX', output_path, timestamp)
     specialized_reports['KOP'] = create_specialized_report(manifest_df, ['KP1'], 'KOP', output_path, timestamp)
 
-    # Special Cases
-    special_cases = manifest_df[
+    # SPECIAL CASES REPORT WITH MULTI-SHIPMENT CUSTOMERS
+    threshold_cases = manifest_df[
         (manifest_df['WEIGHT'] > weight_thr) |
         (manifest_df['VOLUMETRIC_WEIGHT'] > vol_weight_thr) |
         (manifest_df['PIECES'] > pieces_thr)
     ].copy()
     
+    multi_shipment_customers = identify_multi_shipment_customers(manifest_df)
+    multi_shipment_details = manifest_df[
+        manifest_df['CONSIGNEE_NAME_NORM'].isin(multi_shipment_customers['CONSIGNEE_NAME_NORM'])
+    ].copy()
+    
+    special_cases = pd.concat([threshold_cases, multi_shipment_details], ignore_index=True)
+
     if not special_cases.empty:
         special_cases = special_cases.groupby('HWB').agg({
             'CONSIGNEE_NAME': 'first',
@@ -623,34 +623,57 @@ def generate_reports(
             'MATCHED_ROUTE': 'first',
             'WEIGHT': 'max',
             'VOLUMETRIC_WEIGHT': 'max',
-            'PIECES': 'first'
+            'PIECES': 'first',
+            'CONSIGNEE_NAME_NORM': 'first'
         }).reset_index()
+        
+        shipment_counts = manifest_df.groupby('CONSIGNEE_NAME_NORM').agg(
+            total_shipments=('HWB', 'nunique')
+        ).reset_index()
+        
+        special_cases = special_cases.merge(
+            shipment_counts,
+            on='CONSIGNEE_NAME_NORM',
+            how='left'
+        )
         
         def get_trigger_reason(row):
             reasons = []
-            if row['WEIGHT'] > weight_thr: reasons.append(f'Weight >{weight_thr}kg')
-            if row['VOLUMETRIC_WEIGHT'] > vol_weight_thr: reasons.append(f'Volumetric >{vol_weight_thr}kg')
-            if row['PIECES'] > pieces_thr: reasons.append(f'Pieces >{pieces_thr}')
+            if row['WEIGHT'] > weight_thr: 
+                reasons.append(f'Weight >{weight_thr}kg')
+            if row['VOLUMETRIC_WEIGHT'] > vol_weight_thr: 
+                reasons.append(f'Volumetric >{vol_weight_thr}kg')
+            if row['PIECES'] > pieces_thr: 
+                reasons.append(f'Pieces >{pieces_thr}')
+            if row['total_shipments'] > 1:
+                reasons.append(f'Multiple Shipments ({int(row["total_shipments"])})')
             return ', '.join(reasons) if reasons else None
         
         special_cases['TRIGGER_REASON'] = special_cases.apply(get_trigger_reason, axis=1)
         special_cases['WEIGHT_PER_PIECE'] = special_cases.apply(
-            lambda x: round(x['WEIGHT']/x['PIECES'], 2) if x['PIECES'] > pieces_thr else None, axis=1)
+            lambda x: round(x['WEIGHT']/x['PIECES'], 2) if x['PIECES'] > pieces_thr else None,
+            axis=1
+        )
         
         special_cases[''] = ''
         def get_vehicle_suggestion(row):
-            conditions = [
-                row['WEIGHT'] > vehicle_weight_thr,
-                row['VOLUMETRIC_WEIGHT'] > vehicle_vol_thr,
-                row['PIECES'] > vehicle_pieces_thr,
-                (not pd.isna(row['WEIGHT_PER_PIECE'])) and 
-                (row['WEIGHT_PER_PIECE'] > vehicle_kg_per_piece_thr) and 
-                (row['PIECES'] > vehicle_van_max_pieces)
-            ]
-            return "Truck" if any(conditions) else "Van"
+            if any(trigger in str(row['TRIGGER_REASON']) for trigger in ['Weight', 'Volumetric', 'Pieces']):
+                conditions = [
+                    row['WEIGHT'] > vehicle_weight_thr,
+                    row['VOLUMETRIC_WEIGHT'] > vehicle_vol_thr,
+                    row['PIECES'] > vehicle_pieces_thr,
+                    (not pd.isna(row['WEIGHT_PER_PIECE'])) and 
+                    (row['WEIGHT_PER_PIECE'] > vehicle_kg_per_piece_thr) and 
+                    (row['PIECES'] > vehicle_van_max_pieces)
+                ]
+                return "Truck" if any(conditions) else "Van"
+            return None
         
         special_cases['Capacity Suggestion'] = special_cases.apply(get_vehicle_suggestion, axis=1)
-        special_cases = special_cases.sort_values(by="CONSIGNEE_ZIP", ascending=True)
+        special_cases = special_cases.sort_values(
+            by=['CONSIGNEE_ZIP', 'total_shipments'], 
+            ascending=[True, False]
+        )
         
         with pd.ExcelWriter(special_cases_path, engine='openpyxl') as writer:
             special_cases.to_excel(writer, index=False)
@@ -744,7 +767,7 @@ def main():
     
     st.sidebar.subheader("Vehicle Suggestions")
     vehicle_weight_thr = st.sidebar.number_input("Truck weight threshold (kg)", value=70)
-    vehicle_vol_thr = st.sidebar.number_input("Truck volumetric threshold (kg)", value=150)
+    vehicle_vol_thr = st极bar.number_input("Truck volumetric threshold (kg)", value=150)
     vehicle_pieces_thr = st.sidebar.number_input("Truck pieces threshold", value=12)
     vehicle_kg_per_piece_thr = st.sidebar.number_input("Max kg/piece for Van", value=10)
     vehicle_van_max_pieces = st.sidebar.number_input("Max pieces for Van", value=20)
@@ -772,13 +795,11 @@ def main():
     if uploaded_files:
         st.info(f"Processing {len(uploaded_files)} file(s)...")
         
-        # Show files to be processed
         if len(uploaded_files) > 1:
             st.write("📋 **Files to merge:**")
             for i, file in enumerate(uploaded_files, 1):
                 st.write(f"{i}. {file.name}")
         
-        # Process files
         if len(uploaded_files) == 1:
             merged_manifest = process_manifest(uploaded_files[0])
         else:
@@ -788,7 +809,6 @@ def main():
             st.error("No valid data found in uploaded files")
             return
             
-        # Continue with existing processing
         street_city_routes = load_street_city_routes('input/route_street_city.xlsx')
         fallback_routes = load_fallback_routes('input/routes_database.xlsx')
         matched_manifest = match_address_to_route(merged_manifest, street_city_routes, fallback_routes)
@@ -851,7 +871,7 @@ def main():
                        "- **Email** (recipient@domain.com)\n"
                        "- **Contact_Name** (John Doe)")
         else:
-            st.warning("📧 Email mapping not found. Create `input/email_mapping.xlsx` to enable automated emailing.")
+            st.warning("📧 Email mapping not found. Create `input/email极mapping.xlsx` to enable automated emailing.")
             st.info("**Required columns:** Report_Type, Email, Contact_Name")
         
         # Standard Reports
@@ -922,7 +942,7 @@ def main():
         
         with col11:
             if os.path.exists(specialized_reports['NGR']):
-                with open(specialized_reports['NGR'], "rb") as f:
+                with open(specialized_reports['NGR'], "极rb") as f:
                     st.download_button("NGR Details", f, f"NGR_details_{timestamp}.xlsx",
                                       help="NG1 and NG2 routes")
             else:
