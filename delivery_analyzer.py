@@ -542,7 +542,7 @@ def generate_reports(
         ).reset_index().sort_values('CONSIGNEE_ZIP')
         
         current_row += 2
-        sheet.cell(row=current_row, column=1极, value="ZIP Code Statistics:")
+        sheet.cell(row=current_row, column=1, value="ZIP Code Statistics:")
         current_row += 1
         sheet.cell(row=current_row, column=1, value="ZIP Code")
         sheet.cell(row=current_row, column=2, value="Shipments")
