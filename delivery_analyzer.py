@@ -440,7 +440,7 @@ def identify_multi_shipment_customers(manifest_df):
 def generate_reports(
     manifest_df, output_path, weight_thr=70, vol_weight_thr=150, pieces_thr=6,
     vehicle_weight_thr=70, vehicle_vol_thr=150, vehicle_pieces_thr=12,
-    vehicle_kg_per_piece_thr=10, vehicle_van_max_pieces=20
+    vehicle_kg_per_piece_thr=10, vehicle_van_max_pieces=20, multi_shipment_thr=5
 ):
     # Ensure required columns exist
     required_cols = ['HWB', 'MATCHED_ROUTE', 'CONSIGNEE_NAME_NORM', 'CONSIGNEE_NAME', 
@@ -449,7 +449,7 @@ def generate_reports(
     for col in required_cols:
         if col not in manifest_df.columns:
             st.error(f"❌ Missing required column: {col}")
-            manifest_df[col] = ""  # Create empty column to prevent errors
+            manifest_df[col] = ""
 
     hwb_aggregated = manifest_df.groupby(['HWB', 'MATCHED_ROUTE']).agg({
         'CONSIGNEE_NAME_NORM': 'first',
@@ -600,77 +600,126 @@ def generate_reports(
     specialized_reports['NGX'] = create_specialized_report(manifest_df, ['NGX'], 'NGX', output_path, timestamp)
     specialized_reports['KOP'] = create_specialized_report(manifest_df, ['KP1'], 'KOP', output_path, timestamp)
 
-    # SPECIAL CASES REPORT (Threshold-based only)
-    special_cases = manifest_df[
+    # SPECIAL CASES REPORT WITH INTEGRATED MULTI-SHIPMENT CUSTOMERS
+    # 1. Threshold-based special cases
+    threshold_special_cases = manifest_df[
         (manifest_df['WEIGHT'] > weight_thr) |
         (manifest_df['VOLUMETRIC_WEIGHT'] > vol_weight_thr) |
         (manifest_df['PIECES'] > pieces_thr)
     ].copy()
     
-    if not special_cases.empty:
-        special_cases = special_cases.groupby('HWB').agg({
-            'CONSIGNEE_NAME': 'first',
-            'CONSIGNEE_ZIP': 'first',
-            'MATCHED_ROUTE': 'first',
-            'WEIGHT': 'max',
-            'VOLUMETRIC_WEIGHT': 'max',
-            'PIECES': 'first'
-        }).reset_index()
+    # 2. Multi-shipment customers that meet the threshold
+    customer_shipments = manifest_df.groupby('CONSIGNEE_NAME_NORM').agg(
+        total_shipments=('HWB', 'nunique'),
+        total_pieces=('PIECES', 'sum'),
+        zip_code=('CONSIGNEE_ZIP', 'first'),
+        consignee_name=('CONSIGNEE_NAME', 'first'),
+        matched_route=('MATCHED_ROUTE', 'first')
+    ).reset_index()
+    
+    multi_shipment_special = customer_shipments[customer_shipments['total_shipments'] >= multi_shipment_thr].copy()
+    
+    with pd.ExcelWriter(special_cases_path, engine='openpyxl') as writer:
+        workbook = writer.book
+        sheet = workbook.active
+        sheet.title = "Special Cases"
         
-        def get_trigger_reason(row):
-            reasons = []
-            if row['WEIGHT'] > weight_thr: reasons.append(f'Weight >{weight_thr}kg')
-            if row['VOLUMETRIC_WEIGHT'] > vol_weight_thr: reasons.append(f'Volumetric >{vol_weight_thr}kg')
-            if row['PIECES'] > pieces_thr: reasons.append(f'Pieces >{pieces_thr}')
-            return ', '.join(reasons) if reasons else None
-        
-        special_cases['TRIGGER_REASON'] = special_cases.apply(get_trigger_reason, axis=1)
-        special_cases['WEIGHT_PER_PIECE'] = special_cases.apply(
-            lambda x: round(x['WEIGHT']/x['PIECES'], 2) if x['PIECES'] > pieces_thr else None, axis=1)
-        
-        special_cases[''] = ''
-        def get_vehicle_suggestion(row):
-            conditions = [
-                row['WEIGHT'] > vehicle_weight_thr,
-                row['VOLUMETRIC_WEIGHT'] > vehicle_vol_thr,
-                row['PIECES'] > vehicle_pieces_thr,
-                (not pd.isna(row['WEIGHT_PER_PIECE'])) and 
-                (row['WEIGHT_PER_PIECE'] > vehicle_kg_per_piece_thr) and 
-                (row['PIECES'] > vehicle_van_max_pieces)
-            ]
-            return "Truck" if any(conditions) else "Van"
-        
-        special_cases['Capacity Suggestion'] = special_cases.apply(get_vehicle_suggestion, axis=1)  # FIXED: Removed corrupted character
-        special_cases = special_cases.sort_values(by="CONSIGNEE_ZIP", ascending=True)
-        
-        with pd.ExcelWriter(special_cases_path, engine='openpyxl') as writer:
-            special_cases.to_excel(writer, index=False)
-            workbook = writer.book
-            sheet = workbook.active
+        # Write threshold-based special cases first
+        if not threshold_special_cases.empty:
+            threshold_cases_processed = threshold_special_cases.groupby('HWB').agg({
+                'CONSIGNEE_NAME': 'first',
+                'CONSIGNEE_ZIP': 'first',
+                'MATCHED_ROUTE': 'first',
+                'WEIGHT': 'max',
+                'VOLUMETRIC_WEIGHT': 'max',
+                'PIECES': 'first'
+            }).reset_index()
+            
+            def get_trigger_reason(row):
+                reasons = []
+                if row['WEIGHT'] > weight_thr: reasons.append(f'Weight >{weight_thr}kg')
+                if row['VOLUMETRIC_WEIGHT'] > vol_weight_thr: reasons.append(f'Volumetric >{vol_weight_thr}kg')
+                if row['PIECES'] > pieces_thr: reasons.append(f'Pieces >{pieces_thr}')
+                return ', '.join(reasons) if reasons else None
+            
+            threshold_cases_processed['TRIGGER_REASON'] = threshold_cases_processed.apply(get_trigger_reason, axis=1)
+            threshold_cases_processed['WEIGHT_PER_PIECE'] = threshold_cases_processed.apply(
+                lambda x: round(x['WEIGHT']/x['PIECES'], 2) if x['PIECES'] > pieces_thr else None, axis=1)
+            
+            threshold_cases_processed[''] = ''
+            def get_vehicle_suggestion(row):
+                conditions = [
+                    row['WEIGHT'] > vehicle_weight_thr,
+                    row['VOLUMETRIC_WEIGHT'] > vehicle_vol_thr,
+                    row['PIECES'] > vehicle_pieces_thr,
+                    (not pd.isna(row['WEIGHT_PER_PIECE'])) and 
+                    (row['WEIGHT_PER_PIECE'] > vehicle_kg_per_piece_thr) and 
+                    (row['PIECES'] > vehicle_van_max_pieces)
+                ]
+                return "Truck" if any(conditions) else "Van"
+            
+            threshold_cases_processed['Capacity Suggestion'] = threshold_cases_processed.apply(get_vehicle_suggestion, axis=1)
+            threshold_cases_processed = threshold_cases_processed.sort_values(by="CONSIGNEE_ZIP", ascending=True)
+            
+            # Write threshold cases to Excel
+            threshold_cases_processed.to_excel(writer, index=False, sheet_name='Special Cases')
+            
+            # Apply formatting
             truck_font = Font(color='FF0000', bold=True)
             van_font = Font(color='000000', bold=True)
-            suggestion_col = special_cases.columns.get_loc('Capacity Suggestion') + 1
-            for row_idx in range(2, len(special_cases)+2):
+            suggestion_col = threshold_cases_processed.columns.get_loc('Capacity Suggestion') + 1
+            for row_idx in range(2, len(threshold_cases_processed)+2):
                 cell = sheet.cell(row=row_idx, column=suggestion_col)
                 if cell.value == "Truck":
                     cell.font = truck_font
                 elif cell.value == "Van":
                     cell.font = van_font
-            auto_adjust_column_width(sheet)
-    else:
-        pd.DataFrame().to_excel(special_cases_path, index=False)
+            
+            current_row = len(threshold_cases_processed) + 2
+        else:
+            current_row = 1
+        
+        # Add 3 blank rows
+        for i in range(3):
+            current_row += 1
+        
+        # Add multi-shipment customers header and data
+        if not multi_shipment_special.empty:
+            # Header for multi-shipment section
+            sheet.cell(row=current_row, column=1, value=f"Multiple Shipments Customers (≥{multi_shipment_thr} shipments)")
+            header_font = Font(bold=True)
+            sheet.cell(row=current_row, column=1).font = header_font
+            current_row += 1
+            
+            # Column headers for multi-shipment section
+            multi_headers = ['CONSIGNEE_NAME', 'ZIP', 'MATCHED_ROUTE', 'SHIPMENT_COUNT', 'TOTAL_PIECES', 'TRIGGER_REASON']
+            for col_idx, header in enumerate(multi_headers, 1):
+                cell = sheet.cell(row=current_row, column=col_idx, value=header)
+                cell.font = header_font
+            current_row += 1
+            
+            # Data for multi-shipment customers
+            multi_shipment_special = multi_shipment_special.sort_values(by=['zip_code', 'total_shipments'], ascending=[True, False])
+            for _, row in multi_shipment_special.iterrows():
+                sheet.cell(row=current_row, column=1, value=row['consignee_name'])
+                sheet.cell(row=current_row, column=2, value=row['zip_code'])
+                sheet.cell(row=current_row, column=3, value=row['matched_route'])
+                sheet.cell(row=current_row, column=4, value=row['total_shipments'])
+                sheet.cell(row=current_row, column=5, value=row['total_pieces'])
+                sheet.cell(row=current_row, column=6, value=f'Multiple Shipments ({row["total_shipments"]})')
+                current_row += 1
+        
+        auto_adjust_column_width(sheet)
 
-    # MULTIPLE SHIPMENTS REPORT (Aggregated by customer)
+    # SEPARATE MULTIPLE SHIPMENTS REPORT (All customers with >1 shipment)
     multi_shipment_customers = identify_multi_shipment_customers(manifest_df)
     if not multi_shipment_customers.empty:
-        # Rename columns for clarity
         multi_shipment_customers.rename(columns={
             'total_shipments': 'Shipment Count',
             'total_pieces': 'Total Pieces',
             'zip_code': 'ZIP'
         }, inplace=True)
         
-        # Reorder columns
         multi_shipment_customers = multi_shipment_customers[['CONSIGNEE_NAME_NORM', 'ZIP', 'Shipment Count', 'Total Pieces']]
         
         with pd.ExcelWriter(multi_shipments_path, engine='openpyxl') as writer:
@@ -690,7 +739,11 @@ def generate_reports(
         auto_adjust_column_width(writer.sheets['Sheet1'])
 
     # WTH MPCS Report
-    wth_mpcs_report = special_cases.sort_values('PIECES', ascending=False) if not special_cases.empty else pd.DataFrame()
+    if not threshold_special_cases.empty:
+        wth_mpcs_report = threshold_special_cases.sort_values('PIECES', ascending=False)
+    else:
+        wth_mpcs_report = pd.DataFrame()
+    
     with pd.ExcelWriter(wth_mpcs_path, engine='openpyxl') as writer:
         wth_mpcs_report.to_excel(writer, index=False)
         if not wth_mpcs_report.empty:
@@ -744,10 +797,20 @@ def main():
     smtp_port = st.sidebar.number_input("SMTP Port", value=587)
     sender_email = st.sidebar.text_input("Sender Email")
     sender_password = st.sidebar.text_input("Email Password", type="password")
+    
     st.sidebar.header("Settings")
     weight_thr = st.sidebar.number_input("Weight Threshold (kg)", value=70)
     vol_weight_thr = st.sidebar.number_input("Volumetric Weight Threshold (kg)", value=150)
     pieces_thr = st.sidebar.number_input("Pieces Threshold", value=6)
+    
+    # NEW: Multi-shipment threshold setting
+    multi_shipment_thr = st.sidebar.number_input(
+        "Multi-Shipment Threshold for Special Cases", 
+        min_value=2, 
+        value=5, 
+        help="Minimum number of shipments for a customer to be included in the special cases report"
+    )
+    
     st.sidebar.subheader("Vehicle Suggestions")
     vehicle_weight_thr = st.sidebar.number_input("Truck weight threshold (kg)", value=70)
     vehicle_vol_thr = st.sidebar.number_input("Truck volumetric threshold (kg)", value=150)
@@ -798,7 +861,8 @@ def main():
             matched_manifest, output_path,
             weight_thr, vol_weight_thr, pieces_thr,
             vehicle_weight_thr, vehicle_vol_thr,
-            vehicle_pieces_thr, vehicle_kg_per_piece_thr, vehicle_van_max_pieces
+            vehicle_pieces_thr, vehicle_kg_per_piece_thr, vehicle_van_max_pieces,
+            multi_shipment_thr  # NEW: Pass the threshold parameter
         )
 
         try:
