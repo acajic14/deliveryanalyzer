@@ -455,17 +455,26 @@ def add_target_conditional_formatting(sheet, col_letter, start_row, end_row):
         CellIsRule(operator='between', formula=['0', '5'], font=green_font))
 
 def auto_adjust_column_width(worksheet):
+    from openpyxl.cell.cell import MergedCell
     for column in worksheet.columns:
         max_length = 0
-        column_letter = column[0].column_letter
+        column_letter = None
         for cell in column:
+            if isinstance(cell, MergedCell):
+                continue
+            if column_letter is None:
+                column_letter = cell.column_letter
             try:
-                if len(str(cell.value)) > max_length:
-                    max_length = len(str(cell.value))
+                if cell.value:
+                    length = len(str(cell.value))
+                    if length > max_length:
+                        max_length = length
             except:
                 pass
-        adjusted_width = min(max_length + 2, 50)
-        worksheet.column_dimensions[column_letter].width = adjusted_width
+        if column_letter:
+            adjusted_width = min(max_length + 2, 50)
+            worksheet.column_dimensions[column_letter].width = adjusted_width
+
 
 def create_specialized_report(manifest_df, route_prefixes, report_name, output_path, timestamp):
     filtered_data = manifest_df[
