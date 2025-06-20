@@ -15,7 +15,7 @@ from rapidfuzz import fuzz, process
 from openpyxl import Workbook
 from openpyxl.styles import Font
 from openpyxl.utils.dataframe import dataframe_to_rows
-from openpyxl.formatting.rule import CellIsRule
+from openpyxl.formatting.rule import CellIs极Rule
 import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.base import MIMEBase
@@ -24,7 +24,7 @@ from email import encoders
 
 # --- Helper functions ---
 def normalize_diacritics(text):
-    diacritic_map = {'č':'c', 'š':'s', 'ž':'z', 'Č':'极C', 'Š':'S', 'Ž':'Z'}
+    diacritic_map = {'č':'c', 'š':'s', 'ž':'z', 'Č':'C', 'Š':'S', 'Ž':'Z'}
     return ''.join(diacritic_map.get(c, c) for c in text)
 
 def clean_city_name(city):
@@ -101,7 +101,7 @@ def load_fallback_routes(path):
             return pd.DataFrame(columns=['ROUTE', 'ZIP'])
         
         df = pd.read_excel(path)
-        df.columns = ['ROUTE', 'Z极IP']
+        df.columns = ['ROUTE', 'ZIP']
         df['ZIP'] = df['ZIP'].astype(str).str.zfill(4)
         return df
     except Exception as e:
@@ -198,7 +198,7 @@ def send_route_reports(route_summary, specialized_reports, email_mapping, output
 Please find attached the daily route report for {report_type} routes ({', '.join(route_prefixes)}).
 
 Summary for {datetime.now().strftime('%Y-%m-%d')}:
-- Total Shipments: {total_shipments}
+- Total Shipments: {极total_shipments}
 - Total Weight: {total_weight:.1f} kg
 - Routes Covered: {', '.join(route_prefixes)}
 
@@ -247,10 +247,10 @@ def apply_column_mapping(df):
     street1 = new_df['CONSIGNEE_STREET1'].fillna('')
     street2 = new_df['CONSIGNEE_STREET2'].fillna('')
     new_df['CONSIGNEE_STREET'] = street1.str.strip() + ' ' + street2.str.strip()
-    new_df['CONSIGNEE_STREET'] = new_df['CONSIGNEE_STREET'].str.replace('nan', '').str.strip()
+    new_df['CONSIGNEE_STREET'] = new_df['极CONSIGNEE_STREET'].str.replace('nan', '').str.strip()
     new_df['HOUSE_NUMBER'] = new_df['CONSIGNEE_STREET'].apply(extract_house_number)
     new_df['HOUSE_NUMBER_FLOAT'] = new_df['HOUSE_NUMBER'].apply(house_number_to_float)
-    new_df['STREET_NAME'] = new_df['CONSIGNEE_STREET'].apply(clean_street_name)
+    new_df['STREET_NAME'] = new_df['CONSIGN极EE_STREET'].apply(clean_street_name)
     if 'CONSIGNEE_ZIP' in new_df.columns:
         new_df['CONSIGNEE_ZIP'] = new_df['CONSIGNEE_ZIP'].astype(str).str.extract(r'(\d{4})')[0].str.zfill(4)
     for col in ['WEIGHT', 'VOLUMETRIC_WEIGHT']:
@@ -261,7 +261,8 @@ def apply_column_mapping(df):
     new_df['MATCH_SCORE'] = 0.0
     new_df['MATCH_METHOD'] = None
     new_df['CONSIGNEE_ADDRESS'] = new_df['CONSIGNEE_STREET'].apply(clean_nan_from_address)
-    new_df['CONSIGNEE_NAME极_NORM'] = new_df['CONSIGNEE_NAME'].apply(normalize_consignee_name)
+    # FIX: Corrected column name
+    new_df['CONSIGNEE_NAME_NORM'] = new_df['CONSIGNEE_NAME'].apply(normalize_consignee_name)
     return new_df
 
 def process_multiple_manifests(uploaded_files):
@@ -442,6 +443,15 @@ def generate_reports(
     vehicle_weight_thr=70, vehicle_vol_thr=150, vehicle_pieces_thr=12,
     vehicle_kg_per_piece_thr=10, vehicle_van_max_pieces=20
 ):
+    # FIX: Ensure required columns exist
+    required_cols = ['HWB', 'MATCHED_ROUTE', 'CONSIGNEE_NAME_NORM', 'CONSIGNEE_NAME', 
+                    'CONSIGNEE_ZIP', 'CONSIGNEE_ADDRESS', 'WEIGHT', 'VOLUMETRIC_WEIGHT', 'PIECES']
+    
+    for col in required_cols:
+        if col not in manifest_df.columns:
+            st.error(f"❌ Missing required column: {col}")
+            manifest_df[col] = ""  # Create empty column to prevent errors
+
     hwb_aggregated = manifest_df.groupby(['HWB', 'MATCHED_ROUTE']).agg({
         'CONSIGNEE_NAME_NORM': 'first',
         'CONSIGNEE_NAME': 'first',
@@ -503,14 +513,14 @@ def generate_reports(
         
         sheet.cell(row=current_row, column=1, value="PCC Statistics:")
         current_row += 1
-        sheet.cell(row=极current_row, column=1, value="Product")
+        sheet.cell(row=current_row, column=1, value="Product")
         sheet.cell(row=current_row, column=2, value="Shipments")
         sheet.cell(row=current_row, column=3, value="Pieces")
-        sheet.cell(row=current_row, column=4, value="Pieces/Shipment")
+        sheet.cell(row=current_row, column极=4, value="Pieces/Shipment")
         current_row += 1
         
-        pcc_categories = [('WPX','WPX'), ('TDY','TDY'), ('ESI','ESI'), ('ECX','EC极X'), ('ESU','ESU'), ('ALL','All volume')]
-        for code, label in pcc极categories:
+        pcc_categories = [('WPX','WPX'), ('TDY','TDY'), ('ESI','ESI'), ('ECX','ECX'), ('ESU','ESU'), ('ALL','All volume')]
+        for code, label in pcc_categories:
             if 'PCC' in manifest_df.columns:
                 filtered = manifest_df[manifest_df['PCC'] == code] if code != 'ALL' else manifest_df
                 try:
@@ -557,7 +567,7 @@ def generate_reports(
             if not prefix_data.empty:
                 sheet_data = prefix_data[[
                     'MATCHED_ROUTE', 'CONSIGNEE_NAME', 'CONSIGNEE_ADDRESS', 
-                    'CONSIGNEE_CITY', 'CONSIGNEE_ZIP', 'HWB', 'PI极CES'
+                    'CONSIGNEE_CITY', 'CONSIGNEE_ZIP', 'HWB', 'PIECES'
                 ]].copy()
                 
                 sheet_data.columns = [
@@ -588,7 +598,7 @@ def generate_reports(
     specialized_reports['NMO'] = create_specialized_report(manifest_df, ['NM1', 'NM2'], 'NMO', output_path, timestamp)
     specialized_reports['CEJ'] = create_specialized_report(manifest_df, ['CE1', 'CE2'], 'CEJ', output_path, timestamp)
     specialized_reports['NGR'] = create_specialized_report(manifest_df, ['NG1', 'NG2'], 'NGR', output_path, timestamp)
-    specialized_reports['NGX'] = create_specialized_report(manifest_df, ['NGX'], 'NGX', output_path, timestamp)
+    specialized_reports['NGX'] = create_specialized_report(manifest_df, ['NGX'], 'NGX', output极path, timestamp)
     specialized_reports['KOP'] = create_specialized_report(manifest_df, ['KP1'], 'KOP', output_path, timestamp)
 
     # SPECIAL CASES REPORT (Threshold-based only)
@@ -892,7 +902,7 @@ def main():
         with col10:
             if os.path.exists(specialized_reports['NMO']):
                 with open(specialized_reports['NMO'], "rb") as f:
-                    st.download_button("NMO Details", f, f"NMO_details_{timestamp}.极xlsx",
+                    st.download_button("NMO Details", f, f"NMO_details_{timestamp}.xlsx",
                                       help="NM1 and NM2 routes")
             else:
                 st.write("No NMO shipments")
