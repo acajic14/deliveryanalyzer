@@ -114,42 +114,51 @@ def load_targets(path):
             st.warning(f"⚠️ Targets file not found: {path}")
             return pd.DataFrame(columns=['ROUTE', 'Average PU stops', 'Target stops', 'SERVICE_PARTNER', 'LIST_OF_SP', 'SUM_TARGET_STOPS', 'AVG_ROUTES', 'SPR'])
         
-        # Load all columns from targets file
-        df = pd.read_excel(path, header=0)
+        # Load WITHOUT headers to get raw data
+        df = pd.read_excel(path, header=None)
         
-        # Debug: Show what we loaded
-        st.write(f"🔍 Debug: Loaded targets shape: {df.shape}")
-        st.write(f"🔍 Debug: Targets columns: {list(df.columns)}")
-        st.write(f"🔍 Debug: First 5 rows:\n{df.head()}")
+        # Debug: Show raw structure
+        st.write(f"🔍 Debug: Raw data shape: {df.shape}")
+        st.write(f"🔍 Debug: First 3 rows:\n{df.head(3)}")
+        
+        # Skip the header row (row 0) and start from row 1
+        df_data = df.iloc[1:].reset_index(drop=True)
         
         # Create explicit column mapping by position
         if len(df.columns) >= 11:
             df_mapped = pd.DataFrame()
-            df_mapped['ROUTE'] = df.iloc[:, 0].astype(str)                    # Column A
-            df_mapped['Average PU stops'] = pd.to_numeric(df.iloc[:, 1], errors='coerce').fillna(0)        # Column B  
-            df_mapped['Target stops'] = pd.to_numeric(df.iloc[:, 2], errors='coerce').fillna(0)            # Column C
-            df_mapped['SERVICE_PARTNER'] = df.iloc[:, 4].astype(str)         # Column E - Individual route SP
-            df_mapped['LIST_OF_SP'] = df.iloc[:, 7].astype(str)              # Column H - Unique SP list
-            df_mapped['SUM_TARGET_STOPS'] = pd.to_numeric(df.iloc[:, 8], errors='coerce').fillna(0)        # Column I
-            df_mapped['AVG_ROUTES'] = pd.to_numeric(df.iloc[:, 9], errors='coerce').fillna(0)              # Column J
-            df_mapped['SPR'] = pd.to_numeric(df.iloc[:, 10], errors='coerce').fillna(0)                    # Column K
+            df_mapped['ROUTE'] = df_data.iloc[:, 0].astype(str)                    # Column A
+            df_mapped['Average PU stops'] = pd.to_numeric(df_data.iloc[:, 1], errors='coerce').fillna(0)        # Column B  
+            df_mapped['Target stops'] = pd.to_numeric(df_data.iloc[:, 2], errors='coerce').fillna(0)            # Column C
+            df_mapped['SERVICE_PARTNER'] = df_data.iloc[:, 4].astype(str)         # Column E - Individual route SP
+            df_mapped['LIST_OF_SP'] = df_data.iloc[:, 7].astype(str)              # Column H - Unique SP list
+            df_mapped['SUM_TARGET_STOPS'] = pd.to_numeric(df_data.iloc[:, 8], errors='coerce').fillna(0)        # Column I
+            df_mapped['AVG_ROUTES'] = pd.to_numeric(df_data.iloc[:, 9], errors='coerce').fillna(0)              # Column J
+            df_mapped['SPR'] = pd.to_numeric(df_data.iloc[:, 10], errors='coerce').fillna(0)                    # Column K
             
             # Remove rows where ROUTE is NaN or empty
             df_mapped = df_mapped[df_mapped['ROUTE'].notna()]
             df_mapped = df_mapped[df_mapped['ROUTE'] != 'nan']
             df_mapped = df_mapped[df_mapped['ROUTE'] != '']
             
-            df = df_mapped
+            # Debug: Show what we mapped
+            st.write(f"🔍 Debug: After mapping - Routes: {df_mapped['ROUTE'].head()}")
+            st.write(f"🔍 Debug: After mapping - SERVICE_PARTNER: {df_mapped['SERVICE_PARTNER'].head()}")
+            st.write(f"🔍 Debug: SERVICE_PARTNER sample values: {df_mapped['SERVICE_PARTNER'].head(10).tolist()}")
+            
+            # Check if SERVICE_PARTNER column has valid data
+            non_null_sp = df_mapped[df_mapped['SERVICE_PARTNER'].notna() & (df_mapped['SERVICE_PARTNER'] != 'nan') & (df_mapped['SERVICE_PARTNER'] != '')]
+            st.write(f"🔍 Debug: Non-null SERVICE_PARTNER entries: {len(non_null_sp)}")
+            
+            if len(non_null_sp) == 0:
+                st.error("❌ Column E (SERVICE_PARTNER) appears to be empty after processing!")
+            else:
+                st.success(f"✅ Found {len(non_null_sp)} routes with service partner assignments")
+            
+            return df_mapped
         else:
             st.error(f"❌ Targets file needs at least 11 columns, found {len(df.columns)}")
             return pd.DataFrame(columns=['ROUTE', 'Average PU stops', 'Target stops', 'SERVICE_PARTNER', 'LIST_OF_SP', 'SUM_TARGET_STOPS', 'AVG_ROUTES', 'SPR'])
-        
-        # Debug: Show what we mapped
-        st.write(f"🔍 Debug: After mapping - Routes: {df['ROUTE'].head()}")
-        st.write(f"🔍 Debug: After mapping - SERVICE_PARTNER: {df['SERVICE_PARTNER'].head()}")
-        st.write(f"🔍 Debug: After mapping - LIST_OF_SP unique: {df['LIST_OF_SP'].dropna().unique()}")
-        
-        return df
         
     except Exception as e:
         st.error(f"❌ Couldn't load targets.xlsx: {str(e)}")
@@ -878,6 +887,8 @@ def generate_reports(
     specialized_reports['NGX'] = create_specialized_report(manifest_df, ['NGX'], 'NGX', output_path, timestamp)
     specialized_reports['KOP'] = create_specialized_report(manifest_df, ['KP1'], 'KOP', output_path, timestamp)
 
+    # Continue with remaining reports...
+    return timestamp, route_summary, specialized_reports, multi_shipments_path, targets_df
     # SPECIAL CASES REPORT WITH INTEGRATED MULTI-SHIPMENT CUSTOMERS
     threshold_special_cases = manifest_df[
         (manifest_df['WEIGHT'] > weight_thr) |
@@ -994,8 +1005,6 @@ def generate_reports(
     auto_adjust_column_width(ws)
     wb.save(special_cases_path)
 
-    # Continue with remaining reports...
-    return timestamp, route_summary, specialized_reports, multi_shipments_path, targets_df
     # SEPARATE MULTIPLE SHIPMENTS REPORT
     multi_shipment_customers = identify_multi_shipment_customers(manifest_df)
     if not multi_shipment_customers.empty:
