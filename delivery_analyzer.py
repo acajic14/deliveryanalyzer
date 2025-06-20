@@ -160,11 +160,16 @@ def calculate_service_partner_spr(route_summary, targets_df):
         if targets_df.empty or 'SERVICE_PARTNER' not in targets_df.columns:
             return pd.DataFrame()
         
-        # Merge route summary with service partner info
+        # Create a mapping from full route names (CE1A) to loop names (CE1)
+        targets_df_mapped = targets_df.copy()
+        targets_df_mapped['ROUTE_LOOP'] = targets_df_mapped['ROUTE'].str.extract(r'^([A-Z]{2}\d+)')[0]
+        
+        # Merge route summary (which has loop names) with service partner info using loop names
         merged = pd.merge(
             route_summary[['ROUTE', 'Predicted Stops']], 
-            targets_df[['ROUTE', 'SERVICE_PARTNER']], 
-            on='ROUTE', 
+            targets_df_mapped[['ROUTE_LOOP', 'SERVICE_PARTNER']], 
+            left_on='ROUTE', 
+            right_on='ROUTE_LOOP', 
             how='left'
         )
         
@@ -212,6 +217,7 @@ def calculate_service_partner_spr(route_summary, targets_df):
     except Exception as e:
         st.error(f"Error calculating service partner SPR: {str(e)}")
         return pd.DataFrame()
+
 
 def add_service_partner_spr_summary(workbook, sheet, spr_summary):
     """Add service partner SPR summary at the top of route summary sheet"""
