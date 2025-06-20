@@ -749,7 +749,7 @@ def main():
     vol_weight_thr = st.sidebar.number_input("Volumetric Weight Threshold (kg)", value=150)
     pieces_thr = st.sidebar.number_input("Pieces Threshold", value=6)
     st.sidebar.subheader("Vehicle Suggestions")
-    vehicle_weight_thr = st.s极idebar.number_input("Truck weight threshold (kg)", value=70)
+    vehicle_weight_thr = st.sidebar.number_input("Truck weight threshold (kg)", value=70)
     vehicle_vol_thr = st.sidebar.number_input("Truck volumetric threshold (kg)", value=150)
     vehicle_pieces_thr = st.sidebar.number_input("Truck pieces threshold", value=12)
     vehicle_kg_per_piece_thr = st.sidebar.number_input("Max kg/piece for Van", value=10)
