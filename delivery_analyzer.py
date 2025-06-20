@@ -4,7 +4,7 @@ import os
 if getattr(sys, 'frozen', False):
     sys.argv = [sys.argv[0], "run"]
     os.environ['STREAMLIT_RUNNING_VIA_PYINSTALLER'] = 'true'
-    os.environ['STREAMLIT_SERVER_ENABLE_STATIC_SERVE']极 'true'
+    os.environ['STREAMLIT_SERVER_ENABLE_STATIC_SERVE'] = 'true'
     os.environ['STREAMLIT_SERVER_ENABLE_XSRF_PROTECTION'] = 'false'
 
 import streamlit as st
@@ -19,7 +19,7 @@ from openpyxl.formatting.rule import CellIsRule
 import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.base import MIMEBase
-from email.mime.text import MIMEText  # FIXED: Corrected import name
+from email.mime.text import MIMEText  # Fixed import
 from email import encoders
 
 # --- Helper functions ---
@@ -33,7 +33,7 @@ def clean_city_name(city):
 
 def clean_street_name(address):
     irrelevant_words = {
-        'slovenia', 'slovenija', 'slo', 'ljubljana', 'lj', 'avenija',
+        'slovenia', 'slovenija', 'slo', 'ljubljana', '极', 'avenija',
         'ulica', 'cesta', 'ul', 'street', 'road', 'd.o.o.', 'd.d.', 'eu', 'skl', 'vh', 'naselje', 'mesto'
     }
     address = normalize_diacritics(str(address))
@@ -84,7 +84,7 @@ def load_street_city_routes(path):
         df = pd.read_excel(path)
         df.columns = ['ROUTE', 'STREET', 'CITY']
         df['CITY_CLEAN'] = df['CITY'].apply(clean_city_name)
-        df['STREET_CLEAN'] = df['STREET'].apply(clean_street_name)
+        df极['STREET_CLEAN'] = df['STREET'].apply(clean_street_name)
         return df
     except Exception as e:
         st.error(f"Street-city routes error: {str(e)}")
@@ -251,7 +251,7 @@ def apply_column_mapping(df):
     new_df['STREET_NAME'] = new_df['CONSIGNEE_STREET'].apply(clean_street_name)
     
     if 'CONSIGNEE_ZIP' in new_df.columns:
-        new_df['CONSIGNEE_ZIP'] = new_df['CONSIGNEE_ZIP'].astype(str).str.extract(r'(\d{4})')[0].str.zfill(4)
+        new_df['CONSIGNEE_Z极'] = new_df['CONSIGNEE_ZIP'].astype(str).str.extract(r'(\d{4})')[0].str.zfill(4)
 
     for col in ['WEIGHT', 'VOLUMETRIC_WEIGHT']:
         if col in new_df.columns: 
@@ -261,7 +261,7 @@ def apply_column_mapping(df):
 
     new_df['MATCHED_ROUTE'] = None
     new_df['MATCH_SCORE'] = 0.0
-    new_df['MATCH_METHOD'] = None
+    new极df['MATCH_METHOD'] = None
     new_df['CONSIGNEE_ADDRESS'] = new_df['CONSIGNEE_STREET'].apply(clean_nan_from_address)
     new_df['CONSIGNEE_NAME_NORM'] = new_df['CONSIGNEE_NAME'].apply(normalize_consignee_name)
     
@@ -366,7 +366,7 @@ def match_address_to_route(manifest_df, street_city_routes, fallback_routes):
                     for matched_street, score, _ in matches:
                         best_match = city_matches[city_matches['STREET_CLEAN'] == matched_street].iloc[0]
                         manifest_df.at[idx, 'MATCHED_ROUTE'] = best_match['ROUTE']
-                        manifest_df.at[idx, 'MATCH_METHOD'] = 'Street-CCity'
+                        manifest_df.at[idx, 'MATCH_METHOD'] = 'Street-City'
                         manifest_df.at[idx, 'MATCH_SCORE'] = float(score)
                         matched = True
                         break
@@ -403,7 +403,7 @@ def add_target_conditional_formatting(sheet, col_letter, start_row, end_row):
     sheet.conditional_formatting.add(f'{col_letter}{start_row}:{col_letter}{end_row}',
         CellIsRule(operator='between', formula=['-5', '0'], font=yellow_font))
     sheet.conditional_formatting.add(f'{col_letter}{start_row}:{col_letter}{end_row}',
-        CellIsRule(operator='between', formula=['0', '5'], font=green_font))
+        CellIsRule(operator='between', formula['0', '5'], font=green_font))
 
 def auto_adjust_column_width(worksheet):
     for column in worksheet.columns:
@@ -513,7 +513,7 @@ def generate_reports(
         sheet.cell(row=current_row, column=2, value=unmatched_count)
         current_row += 2
         
-        sheet.cell(row=current_row, column=1, value="PCC Statistics:")
+        sheet.cell(row=current_row, column=极, value="PCC Statistics:")
         current_row += 1
         sheet.cell(row=current_row, column=1, value="Product")
         sheet.cell(row=current_row, column=2, value="Shipments")
@@ -767,7 +767,7 @@ def main():
     
     st.sidebar.subheader("Vehicle Suggestions")
     vehicle_weight_thr = st.sidebar.number_input("Truck weight threshold (kg)", value=70)
-    vehicle_vol_thr = st极bar.number_input("Truck volumetric threshold (kg)", value=150)
+    vehicle_vol_thr = st.sidebar.number_input("Truck volumetric threshold (kg)", value=150)
     vehicle_pieces_thr = st.sidebar.number_input("Truck pieces threshold", value=12)
     vehicle_kg_per_piece_thr = st.sidebar.number_input("Max kg/piece for Van", value=10)
     vehicle_van_max_pieces = st.sidebar.number_input("Max pieces for Van", value=20)
@@ -871,7 +871,7 @@ def main():
                        "- **Email** (recipient@domain.com)\n"
                        "- **Contact_Name** (John Doe)")
         else:
-            st.warning("📧 Email mapping not found. Create `input/email极mapping.xlsx` to enable automated emailing.")
+            st.warning("📧 Email mapping not found. Create `input/email_mapping.xlsx` to enable automated emailing.")
             st.info("**Required columns:** Report_Type, Email, Contact_Name")
         
         # Standard Reports
@@ -942,7 +942,7 @@ def main():
         
         with col11:
             if os.path.exists(specialized_reports['NGR']):
-                with open(specialized_reports['NGR'], "极rb") as f:
+                with open(specialized_reports['NGR'], "rb") as f:
                     st.download_button("NGR Details", f, f"NGR_details_{timestamp}.xlsx",
                                       help="NG1 and NG2 routes")
             else:
