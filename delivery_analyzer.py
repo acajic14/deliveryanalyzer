@@ -115,47 +115,48 @@ def load_targets(path):
             return pd.DataFrame(columns=['ROUTE', 'Average PU stops', 'Target stops', 'SERVICE_PARTNER', 'LIST_OF_SP', 'SUM_TARGET_STOPS', 'AVG_ROUTES', 'SPR'])
         
         # Load all columns from targets file
-        df = pd.read_excel(path)
+        df = pd.read_excel(path, header=0)
         
-        # Create a mapping for the columns we need
-        if len(df.columns) >= 11:  # Ensure we have enough columns
-            # Rename columns based on your description
-            new_columns = {}
-            if len(df.columns) > 0: new_columns[df.columns[0]] = 'ROUTE'           # Column A
-            if len(df.columns) > 1: new_columns[df.columns[1]] = 'Average PU stops' # Column B
-            if len(df.columns) > 2: new_columns[df.columns[2]] = 'Target stops'     # Column C
-            if len(df.columns) > 4: new_columns[df.columns[4]] = 'SERVICE_PARTNER'  # Column E
-            if len(df.columns) > 7: new_columns[df.columns[7]] = 'LIST_OF_SP'      # Column H
-            if len(df.columns) > 8: new_columns[df.columns[8]] = 'SUM_TARGET_STOPS' # Column I
-            if len(df.columns) > 9: new_columns[df.columns[9]] = 'AVG_ROUTES'      # Column J
-            if len(df.columns) > 10: new_columns[df.columns[10]] = 'SPR'           # Column K
+        # Debug: Show what we loaded
+        st.write(f"🔍 Debug: Loaded targets shape: {df.shape}")
+        st.write(f"🔍 Debug: Targets columns: {list(df.columns)}")
+        st.write(f"🔍 Debug: First 5 rows:\n{df.head()}")
+        
+        # Create explicit column mapping by position
+        if len(df.columns) >= 11:
+            df_mapped = pd.DataFrame()
+            df_mapped['ROUTE'] = df.iloc[:, 0].astype(str)                    # Column A
+            df_mapped['Average PU stops'] = pd.to_numeric(df.iloc[:, 1], errors='coerce').fillna(0)        # Column B  
+            df_mapped['Target stops'] = pd.to_numeric(df.iloc[:, 2], errors='coerce').fillna(0)            # Column C
+            df_mapped['SERVICE_PARTNER'] = df.iloc[:, 4].astype(str)         # Column E - Individual route SP
+            df_mapped['LIST_OF_SP'] = df.iloc[:, 7].astype(str)              # Column H - Unique SP list
+            df_mapped['SUM_TARGET_STOPS'] = pd.to_numeric(df.iloc[:, 8], errors='coerce').fillna(0)        # Column I
+            df_mapped['AVG_ROUTES'] = pd.to_numeric(df.iloc[:, 9], errors='coerce').fillna(0)              # Column J
+            df_mapped['SPR'] = pd.to_numeric(df.iloc[:, 10], errors='coerce').fillna(0)                    # Column K
             
-            df = df.rename(columns=new_columns)
+            # Remove rows where ROUTE is NaN or empty
+            df_mapped = df_mapped[df_mapped['ROUTE'].notna()]
+            df_mapped = df_mapped[df_mapped['ROUTE'] != 'nan']
+            df_mapped = df_mapped[df_mapped['ROUTE'] != '']
+            
+            df = df_mapped
         else:
-            # Fallback to original structure if not enough columns
-            df.columns = ['ROUTE', 'Average PU stops', 'Target stops']
-            df['SERVICE_PARTNER'] = ''
-            df['LIST_OF_SP'] = ''
-            df['SUM_TARGET_STOPS'] = 0
-            df['AVG_ROUTES'] = 0
-            df['SPR'] = 0
+            st.error(f"❌ Targets file needs at least 11 columns, found {len(df.columns)}")
+            return pd.DataFrame(columns=['ROUTE', 'Average PU stops', 'Target stops', 'SERVICE_PARTNER', 'LIST_OF_SP', 'SUM_TARGET_STOPS', 'AVG_ROUTES', 'SPR'])
         
-        # Clean and convert data types
-        for col in ['SUM_TARGET_STOPS', 'AVG_ROUTES']:
-            if col in df.columns:
-                df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
-        
-        if 'SPR' in df.columns:
-            df['SPR'] = pd.to_numeric(df['SPR'], errors='coerce').fillna(0)
+        # Debug: Show what we mapped
+        st.write(f"🔍 Debug: After mapping - Routes: {df['ROUTE'].head()}")
+        st.write(f"🔍 Debug: After mapping - SERVICE_PARTNER: {df['SERVICE_PARTNER'].head()}")
+        st.write(f"🔍 Debug: After mapping - LIST_OF_SP unique: {df['LIST_OF_SP'].dropna().unique()}")
         
         return df
         
     except Exception as e:
-        st.warning(f"⚠️ Couldn't load targets.xlsx: {str(e)}")
+        st.error(f"❌ Couldn't load targets.xlsx: {str(e)}")
         return pd.DataFrame(columns=['ROUTE', 'Average PU stops', 'Target stops', 'SERVICE_PARTNER', 'LIST_OF_SP', 'SUM_TARGET_STOPS', 'AVG_ROUTES', 'SPR'])
 
 def calculate_service_partner_spr(route_summary, targets_df):
-    """Calculate predicted SPR per service partner - FIXED VERSION"""
+    """Calculate predicted SPR per service partner - FIXED for individual route SP assignments"""
     try:
         if targets_df.empty or 'SERVICE_PARTNER' not in targets_df.columns:
             st.info("🔍 Debug: No service partner data found in targets")
@@ -163,23 +164,13 @@ def calculate_service_partner_spr(route_summary, targets_df):
         
         # Debug: Show what we're working with
         st.write(f"🔍 Debug: Route summary routes: {list(route_summary['ROUTE'].unique())}")
-        st.write(f"🔍 Debug: Targets routes: {list(targets_df['ROUTE'].unique()[:5])}...")
+        st.write(f"🔍 Debug: Targets routes sample: {list(targets_df['ROUTE'].head(10))}")
         
-        # Extract loop names from targets_df route names (e.g., CE1A -> CE1)
-        targets_df_mapped = targets_df.copy()
-        targets_df_mapped['ROUTE_LOOP'] = targets_df_mapped['ROUTE'].str.extract(r'^([A-Z]{2}\d+)')[0]
-        
-        # Remove any NaN values from the extraction
-        targets_df_mapped = targets_df_mapped.dropna(subset=['ROUTE_LOOP'])
-        
-        st.write(f"🔍 Debug: Extracted loop names: {list(targets_df_mapped['ROUTE_LOOP'].unique())}")
-        
-        # Merge route summary (which has loop names) with service partner info using loop names
+        # Direct merge on exact route names (CE1A = CE1A, not CE1A -> CE1)
         merged = pd.merge(
             route_summary[['ROUTE', 'Predicted Stops']], 
-            targets_df_mapped[['ROUTE_LOOP', 'SERVICE_PARTNER']], 
-            left_on='ROUTE', 
-            right_on='ROUTE_LOOP', 
+            targets_df[['ROUTE', 'SERVICE_PARTNER']], 
+            on='ROUTE',  # Direct match: CE1A with CE1A
             how='left'
         )
         
@@ -189,10 +180,13 @@ def calculate_service_partner_spr(route_summary, targets_df):
         # Remove rows where SERVICE_PARTNER is NaN or empty
         merged = merged.dropna(subset=['SERVICE_PARTNER'])
         merged = merged[merged['SERVICE_PARTNER'] != '']
+        merged = merged[merged['SERVICE_PARTNER'] != 'nan']
         
         if merged.empty:
             st.warning("⚠️ No matching routes found between route summary and service partner assignments")
             return pd.DataFrame()
+        
+        st.write(f"🔍 Debug: After cleanup - merged shape: {merged.shape}")
         
         # Group by service partner to sum predicted stops
         predicted_spr_sp = merged.groupby('SERVICE_PARTNER').agg({
@@ -205,11 +199,13 @@ def calculate_service_partner_spr(route_summary, targets_df):
         service_partners = targets_df[['LIST_OF_SP', 'SUM_TARGET_STOPS', 'AVG_ROUTES', 'SPR']].copy()
         service_partners = service_partners.dropna(subset=['LIST_OF_SP'])
         service_partners = service_partners[service_partners['LIST_OF_SP'] != '']
+        service_partners = service_partners[service_partners['LIST_OF_SP'] != 'nan']
         service_partners = service_partners.drop_duplicates(subset=['LIST_OF_SP'])
         
         st.write(f"🔍 Debug: Service partners info:\n{service_partners}")
         
         # Merge predicted SPR with service partner info
+        # Match SERVICE_PARTNER (from individual routes) with LIST_OF_SP (master list)
         spr_summary = pd.merge(
             service_partners, 
             predicted_spr_sp, 
@@ -219,7 +215,7 @@ def calculate_service_partner_spr(route_summary, targets_df):
         )
         
         if spr_summary.empty:
-            st.warning("⚠️ No service partner matches found")
+            st.warning("⚠️ No service partner matches found between individual assignments and master list")
             return pd.DataFrame()
         
         # Calculate percent of predicted stops vs target
@@ -699,6 +695,9 @@ def generate_reports(
     vehicle_weight_thr=70, vehicle_vol_thr=150, vehicle_pieces_thr=12,
     vehicle_kg_per_piece_thr=10, vehicle_van_max_pieces=20, multi_shipment_thr=5
 ):
+    # Initialize specialized_reports early to avoid UnboundLocalError
+    specialized_reports = {}
+    
     # Ensure required columns exist
     required_cols = ['HWB', 'MATCHED_ROUTE', 'CONSIGNEE_NAME_NORM', 'CONSIGNEE_NAME', 
                     'CONSIGNEE_ZIP', 'CONSIGNEE_ADDRESS', 'WEIGHT', 'VOLUMETRIC_WEIGHT', 'PIECES', 'CONSIGNEE_CITY']
@@ -869,12 +868,7 @@ def generate_reports(
 
         auto_adjust_column_width(sheet)
 
-    # Continue with other reports...
-    # [Rest of the reports generation code remains the same as in previous version]
-    
-    return timestamp, route_summary, specialized_reports, multi_shipments_path, targets_df
     # Specialized reports
-    specialized_reports = {}
     specialized_reports['MBX'] = create_specialized_report(manifest_df, ['MB1', 'MB2'], 'MBX', output_path, timestamp)
     specialized_reports['KRA'] = create_specialized_report(manifest_df, ['KR1', 'KR2'], 'KRA', output_path, timestamp)
     specialized_reports['LJU'] = create_specialized_report(manifest_df, ['LJ1', 'LJ2'], 'LJU', output_path, timestamp)
@@ -1000,6 +994,8 @@ def generate_reports(
     auto_adjust_column_width(ws)
     wb.save(special_cases_path)
 
+    # Continue with remaining reports...
+    return timestamp, route_summary, specialized_reports, multi_shipments_path, targets_df
     # SEPARATE MULTIPLE SHIPMENTS REPORT
     multi_shipment_customers = identify_multi_shipment_customers(manifest_df)
     if not multi_shipment_customers.empty:
@@ -1347,7 +1343,7 @@ def main():
         if not route_summary.empty and 'Predicted Stops' in route_summary:
             predicted_spr = route_summary['Predicted Stops'].mean()
             
-            # Calculate service partner SPR summary with debug info removed for production
+            # Calculate service partner SPR summary with debug info for troubleshooting
             spr_summary = calculate_service_partner_spr(route_summary, targets_df)
             
             st.markdown(f"""
@@ -1409,7 +1405,7 @@ def main():
                     st.error(f"🚨 **Performance Below Target** - Average performance: {avg_performance:.1f}%. Review capacity and route optimization.")
                 
             else:
-                st.info("ℹ️ Service Partner SPR data not available. Please ensure your targets.xlsx file includes service partner information in columns E, H, I, J, and K.")
+                st.info("ℹ️ Service Partner SPR data not available. Please check the debug information above to troubleshoot the targets.xlsx file structure.")
         else:
             st.warning("⚠️ No routes matched - cannot calculate SPR")
         
