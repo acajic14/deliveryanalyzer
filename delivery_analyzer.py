@@ -436,7 +436,6 @@ def identify_multi_shipment_customers(manifest_df):
         by=['zip_code', 'total_shipments'],
         ascending=[True, False]
     )
-
 def generate_reports(
     manifest_df, output_path, weight_thr=70, vol_weight_thr=150, pieces_thr=6,
     vehicle_weight_thr=70, vehicle_vol_thr=150, vehicle_pieces_thr=12,
@@ -444,7 +443,7 @@ def generate_reports(
 ):
     # Ensure required columns exist
     required_cols = ['HWB', 'MATCHED_ROUTE', 'CONSIGNEE_NAME_NORM', 'CONSIGNEE_NAME', 
-                    'CONSIGNEE_ZIP', 'CONSIGNEE_ADDRESS', 'WEIGHT', 'VOLUMETRIC_WEIGHT', 'PIECES']
+                    'CONSIGNEE_ZIP', 'CONSIGNEE_ADDRESS', 'WEIGHT', 'VOLUMETRIC_WEIGHT', 'PIECES', 'CONSIGNEE_CITY']
     
     for col in required_cols:
         if col not in manifest_df.columns:
@@ -600,7 +599,7 @@ def generate_reports(
     specialized_reports['NGX'] = create_specialized_report(manifest_df, ['NGX'], 'NGX', output_path, timestamp)
     specialized_reports['KOP'] = create_specialized_report(manifest_df, ['KP1'], 'KOP', output_path, timestamp)
 
-    # SPECIAL CASES REPORT WITH INTEGRATED MULTI-SHIPMENT CUSTOMERS - FIXED VERSION
+    # SPECIAL CASES REPORT WITH INTEGRATED MULTI-SHIPMENT CUSTOMERS - ALIGNED VERSION
     # 1. Threshold-based special cases
     threshold_special_cases = manifest_df[
         (manifest_df['WEIGHT'] > weight_thr) |
@@ -691,30 +690,35 @@ def generate_reports(
     for i in range(3):
         current_row += 1
     
-    # Add multi-shipment customers header and data
+    # Add multi-shipment customers header and data - ALIGNED TO MATCH COLUMNS
     if not multi_shipment_special.empty:
-        # Header for multi-shipment section
-        ws.cell(row=current_row, column=1, value=f"Multiple Shipments Customers (≥{multi_shipment_thr} shipments)")
+        # Header for multi-shipment section - moved one column to the right (starting at column 2)
+        ws.cell(row=current_row, column=2, value=f"Multiple Shipments Customers (≥{multi_shipment_thr} shipments)")
         header_font = Font(bold=True)
-        ws.cell(row=current_row, column=1).font = header_font
+        ws.cell(row=current_row, column=2).font = header_font
         current_row += 1
         
-        # Column headers for multi-shipment section
-        multi_headers = ['CONSIGNEE_NAME', 'ZIP', 'MATCHED_ROUTE', 'SHIPMENT_COUNT', 'TOTAL_PIECES', 'TRIGGER_REASON']
-        for col_idx, header in enumerate(multi_headers, 1):
-            cell = ws.cell(row=current_row, column=col_idx, value=header)
-            cell.font = header_font
+        # Column headers for multi-shipment section - aligned with threshold cases
+        # HWB(col1) | CONSIGNEE_NAME(col2) | CONSIGNEE_ZIP(col3) | MATCHED_ROUTE(col4) | ... | TRIGGER_REASON
+        ws.cell(row=current_row, column=1, value="")  # Empty for HWB column
+        ws.cell(row=current_row, column=2, value="CONSIGNEE_NAME").font = header_font
+        ws.cell(row=current_row, column=3, value="CONSIGNEE_ZIP").font = header_font  
+        ws.cell(row=current_row, column=4, value="MATCHED_ROUTE").font = header_font
+        ws.cell(row=current_row, column=5, value="SHIPMENT_COUNT").font = header_font
+        ws.cell(row=current_row, column=6, value="TOTAL_PIECES").font = header_font
+        ws.cell(row=current_row, column=7, value="TRIGGER_REASON").font = header_font
         current_row += 1
         
-        # Data for multi-shipment customers
+        # Data for multi-shipment customers - aligned with threshold cases columns
         multi_shipment_special = multi_shipment_special.sort_values(by=['zip_code', 'total_shipments'], ascending=[True, False])
         for _, row in multi_shipment_special.iterrows():
-            ws.cell(row=current_row, column=1, value=row['consignee_name'])
-            ws.cell(row=current_row, column=2, value=row['zip_code'])
-            ws.cell(row=current_row, column=3, value=row['matched_route'])
-            ws.cell(row=current_row, column=4, value=row['total_shipments'])
-            ws.cell(row=current_row, column=5, value=row['total_pieces'])
-            ws.cell(row=current_row, column=6, value=f'Multiple Shipments ({row["total_shipments"]})')
+            ws.cell(row=current_row, column=1, value="")  # Empty for HWB column alignment
+            ws.cell(row=current_row, column=2, value=row['consignee_name'])  # Matches CONSIGNEE_NAME column
+            ws.cell(row=current_row, column=3, value=row['zip_code'])  # Matches CONSIGNEE_ZIP column
+            ws.cell(row=current_row, column=4, value=row['matched_route'])  # Matches MATCHED_ROUTE column
+            ws.cell(row=current_row, column=5, value=row['total_shipments'])
+            ws.cell(row=current_row, column=6, value=row['total_pieces'])
+            ws.cell(row=current_row, column=7, value=f'Multiple Shipments ({row["total_shipments"]})')
             current_row += 1
     
     # If no data at all, add a placeholder
@@ -751,16 +755,86 @@ def generate_reports(
         matching_details.to_excel(writer, index=False)
         auto_adjust_column_width(writer.sheets['Sheet1'])
 
-    # WTH MPCS Report
-    if not threshold_special_cases.empty:
-        wth_mpcs_report = threshold_special_cases.sort_values('PIECES', ascending=False)
-    else:
-        wth_mpcs_report = pd.DataFrame()
+    # WTH MPCS REPORT - REDESIGNED WITH PROPER COLUMNS AND MULTI-SHIPMENT INTEGRATION
+    wb_wth = Workbook()
+    ws_wth = wb_wth.active
+    ws_wth.title = "WTH MPCS Report"
     
-    with pd.ExcelWriter(wth_mpcs_path, engine='openpyxl') as writer:
-        wth_mpcs_report.to_excel(writer, index=False)
-        if not wth_mpcs_report.empty:
-            auto_adjust_column_width(writer.sheets['Sheet1'])
+    # Column structure: A=Consignee, B=ZIP, C=City, D=Pieces, E=Weight, F=Vol Weight, G=HWB, H=blank, I=blank, J=Trigger Reason
+    headers = ['CONSIGNEE_NAME', 'ZIP', 'CITY', 'PIECES', 'WEIGHT', 'VOLUMETRIC_WEIGHT', 'HWB', '', '', 'TRIGGER_REASON']
+    for col_idx, header in enumerate(headers, 1):
+        cell = ws_wth.cell(row=1, column=col_idx, value=header)
+        cell.font = Font(bold=True)
+    
+    current_row = 2
+    
+    # 1. Add threshold-based special cases
+    if not threshold_special_cases.empty:
+        threshold_cases_for_wth = threshold_special_cases.groupby('HWB').agg({
+            'CONSIGNEE_NAME': 'first',
+            'CONSIGNEE_ZIP': 'first',
+            'CONSIGNEE_CITY': 'first',
+            'WEIGHT': 'max',
+            'VOLUMETRIC_WEIGHT': 'max',
+            'PIECES': 'first'
+        }).reset_index()
+        
+        def get_trigger_reason_wth(row):
+            reasons = []
+            if row['WEIGHT'] > weight_thr: reasons.append(f'Weight >{weight_thr}kg')
+            if row['VOLUMETRIC_WEIGHT'] > vol_weight_thr: reasons.append(f'Volumetric >{vol_weight_thr}kg')
+            if row['PIECES'] > pieces_thr: reasons.append(f'Pieces >{pieces_thr}')
+            return ', '.join(reasons) if reasons else None
+        
+        threshold_cases_for_wth['TRIGGER_REASON'] = threshold_cases_for_wth.apply(get_trigger_reason_wth, axis=1)
+        threshold_cases_for_wth = threshold_cases_for_wth.sort_values(by="CONSIGNEE_ZIP", ascending=True)
+        
+        for _, row in threshold_cases_for_wth.iterrows():
+            ws_wth.cell(row=current_row, column=1, value=row['CONSIGNEE_NAME'])  # A: Consignee
+            ws_wth.cell(row=current_row, column=2, value=row['CONSIGNEE_ZIP'])   # B: ZIP
+            ws_wth.cell(row=current_row, column=3, value=row['CONSIGNEE_CITY'])  # C: City
+            ws_wth.cell(row=current_row, column=4, value=row['PIECES'])          # D: Pieces
+            ws_wth.cell(row=current_row, column=5, value=row['WEIGHT'])          # E: Weight
+            ws_wth.cell(row=current_row, column=6, value=row['VOLUMETRIC_WEIGHT']) # F: Vol Weight
+            ws_wth.cell(row=current_row, column=7, value=row['HWB'])             # G: HWB
+            # H, I are left blank
+            ws_wth.cell(row=current_row, column=10, value=row['TRIGGER_REASON']) # J: Trigger Reason
+            current_row += 1
+    
+    # 2. Add multi-shipment customers (only those meeting threshold, without HWB)
+    if not multi_shipment_special.empty:
+        # Get city information for multi-shipment customers
+        multi_with_city = manifest_df.groupby('CONSIGNEE_NAME_NORM').agg(
+            total_shipments=('HWB', 'nunique'),
+            total_pieces=('PIECES', 'sum'),
+            total_weight=('WEIGHT', 'sum'),
+            total_vol_weight=('VOLUMETRIC_WEIGHT', 'sum'),
+            zip_code=('CONSIGNEE_ZIP', 'first'),
+            consignee_name=('CONSIGNEE_NAME', 'first'),
+            city=('CONSIGNEE_CITY', 'first')
+        ).reset_index()
+        
+        multi_for_wth = multi_with_city[multi_with_city['total_shipments'] >= multi_shipment_thr].copy()
+        multi_for_wth = multi_for_wth.sort_values(by=['zip_code', 'total_shipments'], ascending=[True, False])
+        
+        for _, row in multi_for_wth.iterrows():
+            ws_wth.cell(row=current_row, column=1, value=row['consignee_name'])    # A: Consignee
+            ws_wth.cell(row=current_row, column=2, value=row['zip_code'])          # B: ZIP
+            ws_wth.cell(row=current_row, column=3, value=row['city'])              # C: City
+            ws_wth.cell(row=current_row, column=4, value=row['total_pieces'])      # D: Pieces
+            ws_wth.cell(row=current_row, column=5, value=round(row['total_weight'], 1))  # E: Weight
+            ws_wth.cell(row=current_row, column=6, value=round(row['total_vol_weight'], 1))  # F: Vol Weight
+            # G: HWB left empty for multi-shipment customers
+            # H, I are left blank
+            ws_wth.cell(row=current_row, column=10, value=f'Multiple Shipments ≥{multi_shipment_thr} ({row["total_shipments"]})')  # J: Trigger Reason
+            current_row += 1
+    
+    # If no data at all, add a placeholder
+    if threshold_special_cases.empty and multi_shipment_special.empty:
+        ws_wth.cell(row=2, column=1, value="No special cases found")
+    
+    auto_adjust_column_width(ws_wth)
+    wb_wth.save(wth_mpcs_path)
 
     # Priority Shipments
     if 'PCC' in manifest_df.columns:
