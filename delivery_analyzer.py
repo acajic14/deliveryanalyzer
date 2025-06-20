@@ -853,9 +853,7 @@ def generate_reports(
     except Exception as e:
         st.error(f"❌ Failed to create route summary: {str(e)}")
 
-    # Continue with remaining reports...
-    return timestamp, route_summary, specialized_reports, multi_shipments_path, targets_df
-    # Specialized reports
+    # SPECIALIZED REPORTS - MOVED BEFORE RETURN STATEMENT
     st.write("🚛 Creating specialized route reports...")
     specialized_reports['MBX'] = create_specialized_report(manifest_df, ['MB1', 'MB2'], 'MBX', output_path, timestamp)
     specialized_reports['KRA'] = create_specialized_report(manifest_df, ['KR1', 'KR2'], 'KRA', output_path, timestamp)
@@ -866,6 +864,8 @@ def generate_reports(
     specialized_reports['NGX'] = create_specialized_report(manifest_df, ['NGX'], 'NGX', output_path, timestamp)
     specialized_reports['KOP'] = create_specialized_report(manifest_df, ['KP1'], 'KOP', output_path, timestamp)
 
+    # Continue with remaining reports...
+    return timestamp, route_summary, specialized_reports, multi_shipments_path, targets_df
     # SPECIAL CASES REPORT - STANDARDIZED WITH pd.ExcelWriter
     try:
         st.write("⚠️ Creating special cases report...")
@@ -1551,28 +1551,28 @@ def main():
         st.markdown("*Route-specific reports for operational teams with enhanced DHL branding*")
         col7, col8, col9, col10 = st.columns(4)
         with col7:
-            if os.path.exists(specialized_reports['MBX']):
+            if 'MBX' in specialized_reports and os.path.exists(specialized_reports['MBX']):
                 with open(specialized_reports['MBX'], "rb") as f:
                     st.download_button("🏢 MBX Details", f, f"DHL_MBX_details_{timestamp}.xlsx",
                                       help="Maribor routes (MB1 and MB2)")
             else:
                 st.write("No MBX shipments")
         with col8:
-            if os.path.exists(specialized_reports['KRA']):
+            if 'KRA' in specialized_reports and os.path.exists(specialized_reports['KRA']):
                 with open(specialized_reports['KRA'], "rb") as f:
                     st.download_button("🏔️ KRA Details", f, f"DHL_KRA_details_{timestamp}.xlsx",
                                       help="Kranj routes (KR1 and KR2)")
             else:
                 st.write("No KRA shipments")
         with col9:
-            if os.path.exists(specialized_reports['LJU']):
+            if 'LJU' in specialized_reports and os.path.exists(specialized_reports['LJU']):
                 with open(specialized_reports['LJU'], "rb") as f:
                     st.download_button("🏛️ LJU Details", f, f"DHL_LJU_details_{timestamp}.xlsx",
                                       help="Ljubljana routes (LJ1 and LJ2)")
             else:
                 st.write("No LJU shipments")
         with col10:
-            if os.path.exists(specialized_reports['NMO']):
+            if 'NMO' in specialized_reports and os.path.exists(specialized_reports['NMO']):
                 with open(specialized_reports['NMO'], "rb") as f:
                     st.download_button("🌊 NMO Details", f, f"DHL_NMO_details_{timestamp}.xlsx",
                                       help="Novo Mesto routes (NM1 and NM2)")
@@ -1581,28 +1581,28 @@ def main():
         
         col11, col12, col13, col14 = st.columns(4)
         with col11:
-            if os.path.exists(specialized_reports['CEJ']):
+            if 'CEJ' in specialized_reports and os.path.exists(specialized_reports['CEJ']):
                 with open(specialized_reports['CEJ'], "rb") as f:
                     st.download_button("🏭 CEJ Details", f, f"DHL_CEJ_details_{timestamp}.xlsx",
                                       help="Celje routes (CE1 and CE2)")
             else:
                 st.write("No CEJ shipments")
         with col12:
-            if os.path.exists(specialized_reports['NGR']):
+            if 'NGR' in specialized_reports and os.path.exists(specialized_reports['NGR']):
                 with open(specialized_reports['NGR'], "rb") as f:
                     st.download_button("🌲 NGR Details", f, f"DHL_NGR_details_{timestamp}.xlsx",
                                       help="Nova Gorica routes (NG1 and NG2)")
             else:
                 st.write("No NGR shipments")
         with col13:
-            if os.path.exists(specialized_reports['NGX']):
+            if 'NGX' in specialized_reports and os.path.exists(specialized_reports['NGX']):
                 with open(specialized_reports['NGX'], "rb") as f:
                     st.download_button("🚀 NGX Details", f, f"DHL_NGX_details_{timestamp}.xlsx",
                                       help="Nova Gorica Express routes")
             else:
                 st.write("No NGX shipments")
         with col14:
-            if os.path.exists(specialized_reports['KOP']):
+            if 'KOP' in specialized_reports and os.path.exists(specialized_reports['KOP']):
                 with open(specialized_reports['KOP'], "rb") as f:
                     st.download_button("⛰️ KOP Details", f, f"DHL_KOP_details_{timestamp}.xlsx",
                                       help="Koper routes (KP1)")
