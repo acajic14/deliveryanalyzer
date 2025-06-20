@@ -670,21 +670,25 @@ def create_specialized_report(manifest_df, route_prefixes, report_name, output_p
         manifest_df['MATCHED_ROUTE'].str.startswith(tuple(route_prefixes), na=False)
     ].copy()
     report_path = f"{output_path}/{report_name}_details_{timestamp}.xlsx"
-    if not filtered_data.empty:
-        report_data = filtered_data[['MATCHED_ROUTE', 'HWB', 'CONSIGNEE_NAME', 'CONSIGNEE_ADDRESS', 'CONSIGNEE_ZIP']].copy()
-        report_data = report_data.sort_values(by=['MATCHED_ROUTE', 'CONSIGNEE_ZIP'], ascending=[True, True])
-        with pd.ExcelWriter(report_path, engine='openpyxl') as writer:
-            report_data.to_excel(writer, index=False, startrow=5)
-            workbook = writer.book
-            sheet = writer.sheets['Sheet1']
-            add_dhl_branding_to_excel(workbook, sheet, f"DHL {report_name} Route Details")
-            auto_adjust_column_width(sheet)
-    else:
-        with pd.ExcelWriter(report_path, engine='openpyxl') as writer:
-            pd.DataFrame(columns=['MATCHED_ROUTE', 'HWB', 'CONSIGNEE_NAME', 'CONSIGNEE_ADDRESS', 'CONSIGNEE_ZIP']).to_excel(writer, index=False, startrow=5)
-            workbook = writer.book
-            sheet = writer.sheets['Sheet1']
-            add_dhl_branding_to_excel(workbook, sheet, f"DHL {report_name} Route Details")
+    try:
+        if not filtered_data.empty:
+            report_data = filtered_data[['MATCHED_ROUTE', 'HWB', 'CONSIGNEE_NAME', 'CONSIGNEE_ADDRESS', 'CONSIGNEE_ZIP']].copy()
+            report_data = report_data.sort_values(by=['MATCHED_ROUTE', 'CONSIGNEE_ZIP'], ascending=[True, True])
+            with pd.ExcelWriter(report_path, engine='openpyxl') as writer:
+                report_data.to_excel(writer, index=False, startrow=5)
+                workbook = writer.book
+                sheet = writer.sheets['Sheet1']
+                add_dhl_branding_to_excel(workbook, sheet, f"DHL {report_name} Route Details")
+                auto_adjust_column_width(sheet)
+        else:
+            with pd.ExcelWriter(report_path, engine='openpyxl') as writer:
+                pd.DataFrame(columns=['MATCHED_ROUTE', 'HWB', 'CONSIGNEE_NAME', 'CONSIGNEE_ADDRESS', 'CONSIGNEE_ZIP']).to_excel(writer, index=False, startrow=5)
+                workbook = writer.book
+                sheet = writer.sheets['Sheet1']
+                add_dhl_branding_to_excel(workbook, sheet, f"DHL {report_name} Route Details")
+        st.write(f"✅ Created specialized report: {report_name}")
+    except Exception as e:
+        st.error(f"❌ Failed to create {report_name} report: {str(e)}")
     return report_path
 
 def identify_multi_shipment_customers(manifest_df):
@@ -706,6 +710,8 @@ def generate_reports(
 ):
     # Initialize specialized_reports early to avoid UnboundLocalError
     specialized_reports = {}
+    
+    st.write("🔄 Starting report generation...")
     
     # Ensure required columns exist
     required_cols = ['HWB', 'MATCHED_ROUTE', 'CONSIGNEE_NAME_NORM', 'CONSIGNEE_NAME', 
@@ -759,125 +765,127 @@ def generate_reports(
     priority_path = f"{output_path}/DHL_Priority_Shipments_{timestamp}.xlsx"
     multi_shipments_path = f"{output_path}/DHL_multi_shipments_{timestamp}.xlsx"
 
-    # Route Summary with Enhanced DHL Branding and Service Partner SPR Summary - FIXED VERSION
-    with pd.ExcelWriter(summary_path, engine='openpyxl') as writer:
-        # First add the route summary data with DHL branding
-        route_summary.to_excel(writer, sheet_name='Summary', index=False, startrow=5)
-        workbook = writer.book
-        sheet = writer.sheets['Summary']
-        
-        # Add enhanced DHL branding first
-        add_dhl_branding_to_excel(workbook, sheet, "Daily Route Summary Report")
-        
-        # Calculate service partner SPR summary
-        spr_summary = calculate_service_partner_spr(route_summary, targets_df)
-        
-        # Add service partner SPR summary AFTER DHL headers but BEFORE route data
-        rows_added = 0
-        if not spr_summary.empty:
-            rows_added = add_service_partner_spr_summary(workbook, sheet, spr_summary)
-        
-        # Adjust all subsequent row references by rows_added
-        current_row = sheet.max_row + 2
-        
-        avg_predicted_stops = route_summary['Predicted Stops'].mean() if not route_summary.empty else 0
-        unmatched_count = len(manifest_df[manifest_df['MATCHED_ROUTE'].isna() | (manifest_df['MATCHED_ROUTE'] == '')])
-        
-        sheet.cell(row=current_row, column=1, value="Average Predicted Stops")
-        sheet.cell(row=current_row, column=2, value=round(avg_predicted_stops, 1))
-        current_row += 1
-        sheet.cell(row=current_row, column=1, value="Unmatched Route Shipments")
-        sheet.cell(row=current_row, column=2, value=unmatched_count)
-        current_row += 2
-        
-        sheet.cell(row=current_row, column=1, value="PCC Statistics:")
-        current_row += 1
-        sheet.cell(row=current_row, column=1, value="Product")
-        sheet.cell(row=current_row, column=2, value="Shipments")
-        sheet.cell(row=current_row, column=3, value="Pieces")
-        sheet.cell(row=current_row, column=4, value="Pieces/Shipment")
-        current_row += 1
-        
-        pcc_categories = [('WPX','WPX'), ('TDY','TDY'), ('ESI','ESI'), ('ECX','ECX'), ('ESU','ESU'), ('ALL','All volume')]
-        for code, label in pcc_categories:
-            if 'PCC' in manifest_df.columns:
-                filtered = manifest_df[manifest_df['PCC'] == code] if code != 'ALL' else manifest_df
-                try:
-                    shipments = int(filtered['HWB'].nunique())
-                    pieces = int(filtered['PIECES'].sum())
-                    ratio = round(pieces/shipments, 2) if shipments > 0 else 0.0
-                except (TypeError, ZeroDivisionError, ValueError):
-                    shipments, pieces, ratio = 0, 0, 0.0
-            else:
-                shipments, pieces, ratio = 0, 0, 0.0
-            sheet.cell(row=current_row, column=1, value=label)
-            sheet.cell(row=current_row, column=2, value=shipments)
-            sheet.cell(row=current_row, column=3, value=pieces)
-            sheet.cell(row=current_row, column=4, value=ratio)
-            current_row += 1
-
-        zip_stats = manifest_df.groupby('CONSIGNEE_ZIP').agg(
-            total_shipments=('HWB', 'nunique'),
-            unique_consignees=('CONSIGNEE_NAME_NORM', 'nunique')
-        ).reset_index().sort_values('CONSIGNEE_ZIP')
-        
-        current_row += 2
-        sheet.cell(row=current_row, column=1, value="ZIP Code Statistics:")
-        current_row += 1
-        sheet.cell(row=current_row, column=1, value="ZIP Code")
-        sheet.cell(row=current_row, column=2, value="Shipments")
-        sheet.cell(row=current_row, column=3, value="Unique Consignees")
-        current_row += 1
-        for _, row in zip_stats.iterrows():
-            sheet.cell(row=current_row, column=1, value=row['CONSIGNEE_ZIP'])
-            sheet.cell(row=current_row, column=2, value=row['total_shipments'])
-            sheet.cell(row=current_row, column=3, value=row['unique_consignees'])
-            current_row += 1
-
-        if not route_summary.empty:
-            # Adjust conditional formatting row range based on service partner summary and DHL headers
-            format_start_row = 6 + rows_added  # DHL headers (4) + SP summary + route data start
-            format_end_row = format_start_row + len(route_summary) - 1
-            add_target_conditional_formatting(sheet, 'J', format_start_row, format_end_row)
-
-        route_prefixes = ['KR', 'LJ', 'KP', 'NG', 'NM', 'CE', 'MB']
-        for prefix in route_prefixes:
-            prefix_data = manifest_df[
-                manifest_df['MATCHED_ROUTE'].str.startswith(prefix, na=False)
-            ].copy()
+    # Route Summary with Enhanced DHL Branding and Service Partner SPR Summary
+    try:
+        st.write("📊 Creating route summary report...")
+        with pd.ExcelWriter(summary_path, engine='openpyxl') as writer:
+            route_summary.to_excel(writer, sheet_name='Summary', index=False, startrow=5)
+            workbook = writer.book
+            sheet = writer.sheets['Summary']
             
-            if not prefix_data.empty:
-                sheet_data = prefix_data[[
-                    'MATCHED_ROUTE', 'CONSIGNEE_NAME', 'CONSIGNEE_ADDRESS', 
-                    'CONSIGNEE_CITY', 'CONSIGNEE_ZIP', 'HWB', 'PIECES'
-                ]].copy()
+            add_dhl_branding_to_excel(workbook, sheet, "Daily Route Summary Report")
+            
+            spr_summary = calculate_service_partner_spr(route_summary, targets_df)
+            
+            rows_added = 0
+            if not spr_summary.empty:
+                rows_added = add_service_partner_spr_summary(workbook, sheet, spr_summary)
+            
+            current_row = sheet.max_row + 2
+            
+            avg_predicted_stops = route_summary['Predicted Stops'].mean() if not route_summary.empty else 0
+            unmatched_count = len(manifest_df[manifest_df['MATCHED_ROUTE'].isna() | (manifest_df['MATCHED_ROUTE'] == '')])
+            
+            sheet.cell(row=current_row, column=1, value="Average Predicted Stops")
+            sheet.cell(row=current_row, column=2, value=round(avg_predicted_stops, 1))
+            current_row += 1
+            sheet.cell(row=current_row, column=1, value="Unmatched Route Shipments")
+            sheet.cell(row=current_row, column=2, value=unmatched_count)
+            current_row += 2
+            
+            sheet.cell(row=current_row, column=1, value="PCC Statistics:")
+            current_row += 1
+            sheet.cell(row=current_row, column=1, value="Product")
+            sheet.cell(row=current_row, column=2, value="Shipments")
+            sheet.cell(row=current_row, column=3, value="Pieces")
+            sheet.cell(row=current_row, column=4, value="Pieces/Shipment")
+            current_row += 1
+            
+            pcc_categories = [('WPX','WPX'), ('TDY','TDY'), ('ESI','ESI'), ('ECX','ECX'), ('ESU','ESU'), ('ALL','All volume')]
+            for code, label in pcc_categories:
+                if 'PCC' in manifest_df.columns:
+                    filtered = manifest_df[manifest_df['PCC'] == code] if code != 'ALL' else manifest_df
+                    try:
+                        shipments = int(filtered['HWB'].nunique())
+                        pieces = int(filtered['PIECES'].sum())
+                        ratio = round(pieces/shipments, 2) if shipments > 0 else 0.0
+                    except (TypeError, ZeroDivisionError, ValueError):
+                        shipments, pieces, ratio = 0, 0, 0.0
+                else:
+                    shipments, pieces, ratio = 0, 0, 0.0
+                sheet.cell(row=current_row, column=1, value=label)
+                sheet.cell(row=current_row, column=2, value=shipments)
+                sheet.cell(row=current_row, column=3, value=pieces)
+                sheet.cell(row=current_row, column=4, value=ratio)
+                current_row += 1
+
+            zip_stats = manifest_df.groupby('CONSIGNEE_ZIP').agg(
+                total_shipments=('HWB', 'nunique'),
+                unique_consignees=('CONSIGNEE_NAME_NORM', 'nunique')
+            ).reset_index().sort_values('CONSIGNEE_ZIP')
+            
+            current_row += 2
+            sheet.cell(row=current_row, column=1, value="ZIP Code Statistics:")
+            current_row += 1
+            sheet.cell(row=current_row, column=1, value="ZIP Code")
+            sheet.cell(row=current_row, column=2, value="Shipments")
+            sheet.cell(row=current_row, column=3, value="Unique Consignees")
+            current_row += 1
+            for _, row in zip_stats.iterrows():
+                sheet.cell(row=current_row, column=1, value=row['CONSIGNEE_ZIP'])
+                sheet.cell(row=current_row, column=2, value=row['total_shipments'])
+                sheet.cell(row=current_row, column=3, value=row['unique_consignees'])
+                current_row += 1
+
+            if not route_summary.empty:
+                format_start_row = 6 + rows_added
+                format_end_row = format_start_row + len(route_summary) - 1
+                add_target_conditional_formatting(sheet, 'J', format_start_row, format_end_row)
+
+            route_prefixes = ['KR', 'LJ', 'KP', 'NG', 'NM', 'CE', 'MB']
+            for prefix in route_prefixes:
+                prefix_data = manifest_df[
+                    manifest_df['MATCHED_ROUTE'].str.startswith(prefix, na=False)
+                ].copy()
                 
-                sheet_data.columns = [
-                    'MATCHED ROUTE', 'CONSIGNEE', 'CONSIGNEE ADDRESS', 
-                    'CITY', 'ZIP', 'AWB', 'PIECES'
-                ]
-                
-                sheet_data = sheet_data.sort_values(['MATCHED ROUTE', 'ZIP'])
-                
-                try:
-                    sheet_data.to_excel(writer, sheet_name=prefix, index=False, startrow=5)
+                if not prefix_data.empty:
+                    sheet_data = prefix_data[[
+                        'MATCHED_ROUTE', 'CONSIGNEE_NAME', 'CONSIGNEE_ADDRESS', 
+                        'CONSIGNEE_CITY', 'CONSIGNEE_ZIP', 'HWB', 'PIECES'
+                    ]].copy()
+                    
+                    sheet_data.columns = [
+                        'MATCHED ROUTE', 'CONSIGNEE', 'CONSIGNEE ADDRESS', 
+                        'CITY', 'ZIP', 'AWB', 'PIECES'
+                    ]
+                    
+                    sheet_data = sheet_data.sort_values(['MATCHED ROUTE', 'ZIP'])
+                    
+                    try:
+                        sheet_data.to_excel(writer, sheet_name=prefix, index=False, startrow=5)
+                        prefix_sheet = writer.sheets[prefix]
+                        add_dhl_branding_to_excel(workbook, prefix_sheet, f"DHL {prefix} Route Details")
+                        auto_adjust_column_width(prefix_sheet)
+                    except Exception as e:
+                        st.warning(f"Could not create sheet {prefix}: {str(e)}")
+                else:
+                    empty_df = pd.DataFrame(columns=[
+                        'MATCHED ROUTE', 'CONSIGNEE', 'CONSIGNEE ADDRESS', 
+                        'CITY', 'ZIP', 'AWB', 'PIECES'
+                    ])
+                    empty_df.to_excel(writer, sheet_name=prefix, index=False, startrow=5)
                     prefix_sheet = writer.sheets[prefix]
                     add_dhl_branding_to_excel(workbook, prefix_sheet, f"DHL {prefix} Route Details")
-                    auto_adjust_column_width(prefix_sheet)
-                except Exception as e:
-                    st.warning(f"Could not create sheet {prefix}: {str(e)}")
-            else:
-                empty_df = pd.DataFrame(columns=[
-                    'MATCHED ROUTE', 'CONSIGNEE', 'CONSIGNEE ADDRESS', 
-                    'CITY', 'ZIP', 'AWB', 'PIECES'
-                ])
-                empty_df.to_excel(writer, sheet_name=prefix, index=False, startrow=5)
-                prefix_sheet = writer.sheets[prefix]
-                add_dhl_branding_to_excel(workbook, prefix_sheet, f"DHL {prefix} Route Details")
 
-        auto_adjust_column_width(sheet)
+            auto_adjust_column_width(sheet)
+        st.success("✅ Route summary report created")
+    except Exception as e:
+        st.error(f"❌ Failed to create route summary: {str(e)}")
 
+    # Continue with remaining reports...
+    return timestamp, route_summary, specialized_reports, multi_shipments_path, targets_df
     # Specialized reports
+    st.write("🚛 Creating specialized route reports...")
     specialized_reports['MBX'] = create_specialized_report(manifest_df, ['MB1', 'MB2'], 'MBX', output_path, timestamp)
     specialized_reports['KRA'] = create_specialized_report(manifest_df, ['KR1', 'KR2'], 'KRA', output_path, timestamp)
     specialized_reports['LJU'] = create_specialized_report(manifest_df, ['LJ1', 'LJ2'], 'LJU', output_path, timestamp)
@@ -887,292 +895,328 @@ def generate_reports(
     specialized_reports['NGX'] = create_specialized_report(manifest_df, ['NGX'], 'NGX', output_path, timestamp)
     specialized_reports['KOP'] = create_specialized_report(manifest_df, ['KP1'], 'KOP', output_path, timestamp)
 
-    # Continue with remaining reports...
-    return timestamp, route_summary, specialized_reports, multi_shipments_path, targets_df
     # SPECIAL CASES REPORT WITH INTEGRATED MULTI-SHIPMENT CUSTOMERS
-    threshold_special_cases = manifest_df[
-        (manifest_df['WEIGHT'] > weight_thr) |
-        (manifest_df['VOLUMETRIC_WEIGHT'] > vol_weight_thr) |
-        (manifest_df['PIECES'] > pieces_thr)
-    ].copy()
-    
-    customer_shipments = manifest_df.groupby('CONSIGNEE_NAME_NORM').agg(
-        total_shipments=('HWB', 'nunique'),
-        total_pieces=('PIECES', 'sum'),
-        zip_code=('CONSIGNEE_ZIP', 'first'),
-        consignee_name=('CONSIGNEE_NAME', 'first'),
-        matched_route=('MATCHED_ROUTE', 'first')
-    ).reset_index()
-    
-    multi_shipment_special = customer_shipments[customer_shipments['total_shipments'] >= multi_shipment_thr].copy()
-    
-    wb = Workbook()
-    ws = wb.active
-    ws.title = "Special Cases"
-    add_dhl_branding_to_excel(wb, ws, "DHL Special Cases Report")
-    
-    current_row = 6
-    
-    if not threshold_special_cases.empty:
-        threshold_cases_processed = threshold_special_cases.groupby('HWB').agg({
-            'CONSIGNEE_NAME': 'first',
-            'CONSIGNEE_ZIP': 'first',
-            'MATCHED_ROUTE': 'first',
-            'WEIGHT': 'max',
-            'VOLUMETRIC_WEIGHT': 'max',
-            'PIECES': 'first'
-        }).reset_index()
+    try:
+        st.write("⚠️ Creating special cases report...")
+        threshold_special_cases = manifest_df[
+            (manifest_df['WEIGHT'] > weight_thr) |
+            (manifest_df['VOLUMETRIC_WEIGHT'] > vol_weight_thr) |
+            (manifest_df['PIECES'] > pieces_thr)
+        ].copy()
         
-        def get_trigger_reason(row):
-            reasons = []
-            if row['WEIGHT'] > weight_thr: reasons.append(f'Weight >{weight_thr}kg')
-            if row['VOLUMETRIC_WEIGHT'] > vol_weight_thr: reasons.append(f'Volumetric >{vol_weight_thr}kg')
-            if row['PIECES'] > pieces_thr: reasons.append(f'Pieces >{pieces_thr}')
-            return ', '.join(reasons) if reasons else None
-        
-        threshold_cases_processed['TRIGGER_REASON'] = threshold_cases_processed.apply(get_trigger_reason, axis=1)
-        threshold_cases_processed['WEIGHT_PER_PIECE'] = threshold_cases_processed.apply(
-            lambda x: round(x['WEIGHT']/x['PIECES'], 2) if x['PIECES'] > pieces_thr else None, axis=1)
-        
-        threshold_cases_processed[''] = ''
-        def get_vehicle_suggestion(row):
-            conditions = [
-                row['WEIGHT'] > vehicle_weight_thr,
-                row['VOLUMETRIC_WEIGHT'] > vehicle_vol_thr,
-                row['PIECES'] > vehicle_pieces_thr,
-                (not pd.isna(row['WEIGHT_PER_PIECE'])) and 
-                (row['WEIGHT_PER_PIECE'] > vehicle_kg_per_piece_thr) and 
-                (row['PIECES'] > vehicle_van_max_pieces)
-            ]
-            return "Truck" if any(conditions) else "Van"
-        
-        threshold_cases_processed['Capacity Suggestion'] = threshold_cases_processed.apply(get_vehicle_suggestion, axis=1)
-        threshold_cases_processed = threshold_cases_processed.sort_values(by="CONSIGNEE_ZIP", ascending=True)
-        
-        headers = threshold_cases_processed.columns.tolist()
-        for col_idx, header in enumerate(headers, 1):
-            cell = ws.cell(row=current_row, column=col_idx, value=header)
-            cell.font = Font(bold=True)
-        current_row += 1
-        
-        for _, row in threshold_cases_processed.iterrows():
-            for col_idx, value in enumerate(row, 1):
-                ws.cell(row=current_row, column=col_idx, value=value)
-            current_row += 1
-        
-        truck_font = Font(color='FF0000', bold=True)
-        van_font = Font(color='000000', bold=True)
-        suggestion_col = threshold_cases_processed.columns.get_loc('Capacity Suggestion') + 1
-        for row_idx in range(7, len(threshold_cases_processed)+7):
-            cell = ws.cell(row=row_idx, column=suggestion_col)
-            if cell.value == "Truck":
-                cell.font = truck_font
-            elif cell.value == "Van":
-                cell.font = van_font
-    
-    for i in range(3):
-        current_row += 1
-    
-    if not multi_shipment_special.empty:
-        ws.cell(row=current_row, column=2, value=f"Multiple Shipments Customers (≥{multi_shipment_thr} shipments)")
-        header_font = Font(bold=True)
-        ws.cell(row=current_row, column=2).font = header_font
-        current_row += 1
-        
-        ws.cell(row=current_row, column=1, value="")
-        ws.cell(row=current_row, column=2, value="CONSIGNEE_NAME").font = header_font
-        ws.cell(row=current_row, column=3, value="CONSIGNEE_ZIP").font = header_font  
-        ws.cell(row=current_row, column=4, value="MATCHED_ROUTE").font = header_font
-        ws.cell(row=current_row, column=5, value="SHIPMENT_COUNT").font = header_font
-        ws.cell(row=current_row, column=6, value="TOTAL_PIECES").font = header_font
-        ws.cell(row=current_row, column=7, value="TRIGGER_REASON").font = header_font
-        current_row += 1
-        
-        multi_shipment_special = multi_shipment_special.sort_values(by=['zip_code', 'total_shipments'], ascending=[True, False])
-        for _, row in multi_shipment_special.iterrows():
-            ws.cell(row=current_row, column=1, value="")
-            ws.cell(row=current_row, column=2, value=row['consignee_name'])
-            ws.cell(row=current_row, column=3, value=row['zip_code'])
-            ws.cell(row=current_row, column=4, value=row['matched_route'])
-            ws.cell(row=current_row, column=5, value=row['total_shipments'])
-            ws.cell(row=current_row, column=6, value=row['total_pieces'])
-            ws.cell(row=current_row, column=7, value=f'Multiple Shipments ({row["total_shipments"]})')
-            current_row += 1
-    
-    if threshold_special_cases.empty and multi_shipment_special.empty:
-        ws.cell(row=6, column=1, value="No special cases found")
-    
-    auto_adjust_column_width(ws)
-    wb.save(special_cases_path)
-
-    # SEPARATE MULTIPLE SHIPMENTS REPORT
-    multi_shipment_customers = identify_multi_shipment_customers(manifest_df)
-    if not multi_shipment_customers.empty:
-        multi_shipment_customers.rename(columns={
-            'total_shipments': 'Shipment Count',
-            'total_pieces': 'Total Pieces',
-            'zip_code': 'ZIP'
-        }, inplace=True)
-        
-        multi_shipment_customers = multi_shipment_customers[['CONSIGNEE_NAME_NORM', 'ZIP', 'Shipment Count', 'Total Pieces']]
-        
-        with pd.ExcelWriter(multi_shipments_path, engine='openpyxl') as writer:
-            multi_shipment_customers.to_excel(writer, index=False, startrow=5)
-            workbook = writer.book
-            sheet = writer.sheets['Sheet1']
-            add_dhl_branding_to_excel(workbook, sheet, "DHL Multiple Shipments Report")
-            auto_adjust_column_width(sheet)
-    else:
-        with pd.ExcelWriter(multi_shipments_path, engine='openpyxl') as writer:
-            pd.DataFrame(columns=['CONSIGNEE_NAME_NORM', 'ZIP', 'Shipment Count', 'Total Pieces']).to_excel(writer, index=False, startrow=5)
-            workbook = writer.book
-            sheet = writer.sheets['Sheet1']
-            add_dhl_branding_to_excel(workbook, sheet, "DHL Multiple Shipments Report")
-
-    # MATCHING DETAILS
-    matching_details = manifest_df[['HWB', 'CONSIGNEE_NAME', 'CONSIGNEE_ZIP', 'CONSIGNEE_ADDRESS', 'MATCHED_ROUTE', 'MATCH_METHOD']].copy()
-    matching_details['MATCHED_ROUTE'] = matching_details['MATCHED_ROUTE'].fillna('UNMATCHED')
-    matching_details['MATCH_METHOD'] = matching_details['MATCH_METHOD'].fillna('UNMATCHED')
-    matching_details.rename(columns={'MATCH_METHOD': 'MATCHING_METHOD'}, inplace=True)
-    
-    with pd.ExcelWriter(matching_details_path, engine='openpyxl') as writer:
-        matching_details.to_excel(writer, index=False, startrow=5)
-        workbook = writer.book
-        sheet = writer.sheets['Sheet1']
-        add_dhl_branding_to_excel(workbook, sheet, "DHL Route Matching Details")
-        auto_adjust_column_width(sheet)
-
-    # WTH MPCS REPORT
-    wb_wth = Workbook()
-    ws_wth = wb_wth.active
-    ws_wth.title = "WTH MPCS Report"
-    add_dhl_branding_to_excel(wb_wth, ws_wth, "DHL WTH MPCS Report")
-    
-    headers = ['CONSIGNEE_NAME', 'ZIP', 'CITY', 'PIECES', 'WEIGHT', 'VOLUMETRIC_WEIGHT', 'HWB', '', '', 'TRIGGER_REASON']
-    for col_idx, header in enumerate(headers, 1):
-        cell = ws_wth.cell(row=6, column=col_idx, value=header)
-        cell.font = Font(bold=True)
-    
-    current_row = 7
-    
-    if not threshold_special_cases.empty:
-        threshold_cases_for_wth = threshold_special_cases.groupby('HWB').agg({
-            'CONSIGNEE_NAME': 'first',
-            'CONSIGNEE_ZIP': 'first',
-            'CONSIGNEE_CITY': 'first',
-            'WEIGHT': 'max',
-            'VOLUMETRIC_WEIGHT': 'max',
-            'PIECES': 'first'
-        }).reset_index()
-        
-        def get_trigger_reason_wth(row):
-            reasons = []
-            if row['WEIGHT'] > weight_thr: reasons.append(f'Weight >{weight_thr}kg')
-            if row['VOLUMETRIC_WEIGHT'] > vol_weight_thr: reasons.append(f'Volumetric >{vol_weight_thr}kg')
-            if row['PIECES'] > pieces_thr: reasons.append(f'Pieces >{pieces_thr}')
-            return ', '.join(reasons) if reasons else None
-        
-        threshold_cases_for_wth['TRIGGER_REASON'] = threshold_cases_for_wth.apply(get_trigger_reason_wth, axis=1)
-        threshold_cases_for_wth = threshold_cases_for_wth.sort_values(by="CONSIGNEE_ZIP", ascending=True)
-        
-        for _, row in threshold_cases_for_wth.iterrows():
-            ws_wth.cell(row=current_row, column=1, value=row['CONSIGNEE_NAME'])
-            ws_wth.cell(row=current_row, column=2, value=row['CONSIGNEE_ZIP'])
-            ws_wth.cell(row=current_row, column=3, value=row['CONSIGNEE_CITY'])
-            ws_wth.cell(row=current_row, column=4, value=row['PIECES'])
-            ws_wth.cell(row=current_row, column=5, value=row['WEIGHT'])
-            ws_wth.cell(row=current_row, column=6, value=row['VOLUMETRIC_WEIGHT'])
-            ws_wth.cell(row=current_row, column=7, value=row['HWB'])
-            ws_wth.cell(row=current_row, column=10, value=row['TRIGGER_REASON'])
-            current_row += 1
-    
-    if not multi_shipment_special.empty:
-        multi_with_city = manifest_df.groupby('CONSIGNEE_NAME_NORM').agg(
+        customer_shipments = manifest_df.groupby('CONSIGNEE_NAME_NORM').agg(
             total_shipments=('HWB', 'nunique'),
             total_pieces=('PIECES', 'sum'),
-            total_weight=('WEIGHT', 'sum'),
-            total_vol_weight=('VOLUMETRIC_WEIGHT', 'sum'),
             zip_code=('CONSIGNEE_ZIP', 'first'),
             consignee_name=('CONSIGNEE_NAME', 'first'),
-            city=('CONSIGNEE_CITY', 'first')
+            matched_route=('MATCHED_ROUTE', 'first')
         ).reset_index()
         
-        multi_for_wth = multi_with_city[multi_with_city['total_shipments'] >= multi_shipment_thr].copy()
-        multi_for_wth = multi_for_wth.sort_values(by=['zip_code', 'total_shipments'], ascending=[True, False])
+        multi_shipment_special = customer_shipments[customer_shipments['total_shipments'] >= multi_shipment_thr].copy()
         
-        for _, row in multi_for_wth.iterrows():
-            ws_wth.cell(row=current_row, column=1, value=row['consignee_name'])
-            ws_wth.cell(row=current_row, column=2, value=row['zip_code'])
-            ws_wth.cell(row=current_row, column=3, value=row['city'])
-            ws_wth.cell(row=current_row, column=4, value=row['total_pieces'])
-            ws_wth.cell(row=current_row, column=5, value=round(row['total_weight'], 1))
-            ws_wth.cell(row=current_row, column=6, value=round(row['total_vol_weight'], 1))
-            ws_wth.cell(row=current_row, column=10, value=f'Multiple Shipments ≥{multi_shipment_thr} ({row["total_shipments"]})')
-            current_row += 1
-    
-    if threshold_special_cases.empty and multi_shipment_special.empty:
-        ws_wth.cell(row=7, column=1, value="No special cases found")
-    
-    auto_adjust_column_width(ws_wth)
-    wb_wth.save(wth_mpcs_path)
-
-    # PRIORITY SHIPMENTS
-    if 'PCC' in manifest_df.columns:
-        manifest_df['PCC'] = manifest_df['PCC'].astype(str).str.strip().str.upper()
-        priority_codes = ['CMX', 'WMX', 'TDT', 'TDY']
-        priority_pccs = manifest_df[manifest_df['PCC'].isin(priority_codes)]
-        if not priority_pccs.empty:
-            group1 = priority_pccs[priority_pccs['PCC'].isin(['CMX', 'WMX'])].sort_values(
-                by=['CONSIGNEE_ZIP', 'MATCHED_ROUTE'], ascending=[True, True])
-            group2 = priority_pccs[priority_pccs['PCC'].isin(['TDT', 'TDY'])].sort_values(
-                by=['CONSIGNEE_ZIP', 'MATCHED_ROUTE'], ascending=[True, True])
+        with pd.ExcelWriter(special_cases_path, engine='openpyxl') as writer:
+            # Create empty dataframe first
+            empty_df = pd.DataFrame()
+            empty_df.to_excel(writer, index=False, startrow=6)
+            workbook = writer.book
+            sheet = writer.sheets['Sheet1']
             
-            wb = Workbook()
-            ws = wb.active
-            ws.title = "Priority Shipments"
-            add_dhl_branding_to_excel(wb, ws, "DHL Priority Shipments Report")
-            
-            cols = ['MATCHED_ROUTE', 'HWB', 'CONSIGNEE_NAME', 'CONSIGNEE_ZIP', 'PCC', 'WEIGHT', 'VOLUMETRIC_WEIGHT', 'PIECES']
-            header_font = Font(bold=True)
+            add_dhl_branding_to_excel(workbook, sheet, "DHL Special Cases Report")
             
             current_row = 6
-            ws.cell(row=current_row, column=1, value="CMX/WMX Priority Shipments").font = header_font
-            current_row += 2
             
-            for col_idx, col in enumerate(cols, 1):
-                ws.cell(row=current_row, column=col_idx, value=col).font = header_font
-            current_row += 1
+            if not threshold_special_cases.empty:
+                threshold_cases_processed = threshold_special_cases.groupby('HWB').agg({
+                    'CONSIGNEE_NAME': 'first',
+                    'CONSIGNEE_ZIP': 'first',
+                    'MATCHED_ROUTE': 'first',
+                    'WEIGHT': 'max',
+                    'VOLUMETRIC_WEIGHT': 'max',
+                    'PIECES': 'first'
+                }).reset_index()
+                
+                def get_trigger_reason(row):
+                    reasons = []
+                    if row['WEIGHT'] > weight_thr: reasons.append(f'Weight >{weight_thr}kg')
+                    if row['VOLUMETRIC_WEIGHT'] > vol_weight_thr: reasons.append(f'Volumetric >{vol_weight_thr}kg')
+                    if row['PIECES'] > pieces_thr: reasons.append(f'Pieces >{pieces_thr}')
+                    return ', '.join(reasons) if reasons else None
+                
+                threshold_cases_processed['TRIGGER_REASON'] = threshold_cases_processed.apply(get_trigger_reason, axis=1)
+                threshold_cases_processed['WEIGHT_PER_PIECE'] = threshold_cases_processed.apply(
+                    lambda x: round(x['WEIGHT']/x['PIECES'], 2) if x['PIECES'] > pieces_thr else None, axis=1)
+                
+                threshold_cases_processed[''] = ''
+                def get_vehicle_suggestion(row):
+                    conditions = [
+                        row['WEIGHT'] > vehicle_weight_thr,
+                        row['VOLUMETRIC_WEIGHT'] > vehicle_vol_thr,
+                        row['PIECES'] > vehicle_pieces_thr,
+                        (not pd.isna(row['WEIGHT_PER_PIECE'])) and 
+                        (row['WEIGHT_PER_PIECE'] > vehicle_kg_per_piece_thr) and 
+                        (row['PIECES'] > vehicle_van_max_pieces)
+                    ]
+                    return "Truck" if any(conditions) else "Van"
+                
+                threshold_cases_processed['Capacity Suggestion'] = threshold_cases_processed.apply(get_vehicle_suggestion, axis=1)
+                threshold_cases_processed = threshold_cases_processed.sort_values(by="CONSIGNEE_ZIP", ascending=True)
+                
+                headers = threshold_cases_processed.columns.tolist()
+                for col_idx, header in enumerate(headers, 1):
+                    cell = sheet.cell(row=current_row, column=col_idx, value=header)
+                    cell.font = Font(bold=True)
+                current_row += 1
+                
+                for _, row in threshold_cases_processed.iterrows():
+                    for col_idx, value in enumerate(row, 1):
+                        sheet.cell(row=current_row, column=col_idx, value=value)
+                    current_row += 1
+                
+                truck_font = Font(color='FF0000', bold=True)
+                van_font = Font(color='000000', bold=True)
+                suggestion_col = threshold_cases_processed.columns.get_loc('Capacity Suggestion') + 1
+                for row_idx in range(7, len(threshold_cases_processed)+7):
+                    cell = sheet.cell(row=row_idx, column=suggestion_col)
+                    if cell.value == "Truck":
+                        cell.font = truck_font
+                    elif cell.value == "Van":
+                        cell.font = van_font
             
-            for row_idx, row in enumerate(dataframe_to_rows(group1[cols], index=False, header=False), current_row):
-                for col_idx, value in enumerate(row, 1):
-                    ws.cell(row=row_idx, column=col_idx, value=value)
+            for i in range(3):
+                current_row += 1
             
-            current_row = ws.max_row + 3
-            ws.cell(row=current_row, column=1, value="TDT/TDY Priority Shipments").font = header_font
-            current_row += 2
+            if not multi_shipment_special.empty:
+                sheet.cell(row=current_row, column=2, value=f"Multiple Shipments Customers (≥{multi_shipment_thr} shipments)")
+                header_font = Font(bold=True)
+                sheet.cell(row=current_row, column=2).font = header_font
+                current_row += 1
+                
+                sheet.cell(row=current_row, column=1, value="")
+                sheet.cell(row=current_row, column=2, value="CONSIGNEE_NAME").font = header_font
+                sheet.cell(row=current_row, column=3, value="CONSIGNEE_ZIP").font = header_font  
+                sheet.cell(row=current_row, column=4, value="MATCHED_ROUTE").font = header_font
+                sheet.cell(row=current_row, column=5, value="SHIPMENT_COUNT").font = header_font
+                sheet.cell(row=current_row, column=6, value="TOTAL_PIECES").font = header_font
+                sheet.cell(row=current_row, column=7, value="TRIGGER_REASON").font = header_font
+                current_row += 1
+                
+                multi_shipment_special = multi_shipment_special.sort_values(by=['zip_code', 'total_shipments'], ascending=[True, False])
+                for _, row in multi_shipment_special.iterrows():
+                    sheet.cell(row=current_row, column=1, value="")
+                    sheet.cell(row=current_row, column=2, value=row['consignee_name'])
+                    sheet.cell(row=current_row, column=3, value=row['zip_code'])
+                    sheet.cell(row=current_row, column=4, value=row['matched_route'])
+                    sheet.cell(row=current_row, column=5, value=row['total_shipments'])
+                    sheet.cell(row=current_row, column=6, value=row['total_pieces'])
+                    sheet.cell(row=current_row, column=7, value=f'Multiple Shipments ({row["total_shipments"]})')
+                    current_row += 1
             
-            for col_idx, col in enumerate(cols, 1):
-                ws.cell(row=current_row, column=col_idx, value=col).font = header_font
-            current_row += 1
+            if threshold_special_cases.empty and multi_shipment_special.empty:
+                sheet.cell(row=6, column=1, value="No special cases found")
             
-            for row_idx, row in enumerate(dataframe_to_rows(group2[cols], index=False, header=False), current_row):
-                for col_idx, value in enumerate(row, 1):
-                    ws.cell(row=row_idx, column=col_idx, value=value)
+            auto_adjust_column_width(sheet)
+        st.success("✅ Special cases report created")
+    except Exception as e:
+        st.error(f"❌ Failed to create special cases report: {str(e)}")
+
+    # SEPARATE MULTIPLE SHIPMENTS REPORT
+    try:
+        st.write("📊 Creating multiple shipments report...")
+        multi_shipment_customers = identify_multi_shipment_customers(manifest_df)
+        if not multi_shipment_customers.empty:
+            multi_shipment_customers.rename(columns={
+                'total_shipments': 'Shipment Count',
+                'total_pieces': 'Total Pieces',
+                'zip_code': 'ZIP'
+            }, inplace=True)
             
-            auto_adjust_column_width(ws)
-            wb.save(priority_path)
+            multi_shipment_customers = multi_shipment_customers[['CONSIGNEE_NAME_NORM', 'ZIP', 'Shipment Count', 'Total Pieces']]
+            
+            with pd.ExcelWriter(multi_shipments_path, engine='openpyxl') as writer:
+                multi_shipment_customers.to_excel(writer, index=False, startrow=5)
+                workbook = writer.book
+                sheet = writer.sheets['Sheet1']
+                add_dhl_branding_to_excel(workbook, sheet, "DHL Multiple Shipments Report")
+                auto_adjust_column_width(sheet)
         else:
-            wb = Workbook()
-            ws = wb.active
-            add_dhl_branding_to_excel(wb, ws, "DHL Priority Shipments Report")
-            ws.cell(row=6, column=1, value="No priority shipments found")
-            wb.save(priority_path)
-    else:
-        wb = Workbook()
-        ws = wb.active
-        add_dhl_branding_to_excel(wb, ws, "DHL Priority Shipments Report")
-        ws.cell(row=6, column=1, value="No PCC data available")
-        wb.save(priority_path)
+            with pd.ExcelWriter(multi_shipments_path, engine='openpyxl') as writer:
+                pd.DataFrame(columns=['CONSIGNEE_NAME_NORM', 'ZIP', 'Shipment Count', 'Total Pieces']).to_excel(writer, index=False, startrow=5)
+                workbook = writer.book
+                sheet = writer.sheets['Sheet1']
+                add_dhl_branding_to_excel(workbook, sheet, "DHL Multiple Shipments Report")
+        st.success("✅ Multiple shipments report created")
+    except Exception as e:
+        st.error(f"❌ Failed to create multiple shipments report: {str(e)}")
+
+    # MATCHING DETAILS
+    try:
+        st.write("🔍 Creating matching details report...")
+        matching_details = manifest_df[['HWB', 'CONSIGNEE_NAME', 'CONSIGNEE_ZIP', 'CONSIGNEE_ADDRESS', 'MATCHED_ROUTE', 'MATCH_METHOD']].copy()
+        matching_details['MATCHED_ROUTE'] = matching_details['MATCHED_ROUTE'].fillna('UNMATCHED')
+        matching_details['MATCH_METHOD'] = matching_details['MATCH_METHOD'].fillna('UNMATCHED')
+        matching_details.rename(columns={'MATCH_METHOD': 'MATCHING_METHOD'}, inplace=True)
+        
+        with pd.ExcelWriter(matching_details_path, engine='openpyxl') as writer:
+            matching_details.to_excel(writer, index=False, startrow=5)
+            workbook = writer.book
+            sheet = writer.sheets['Sheet1']
+            add_dhl_branding_to_excel(workbook, sheet, "DHL Route Matching Details")
+            auto_adjust_column_width(sheet)
+        st.success("✅ Matching details report created")
+    except Exception as e:
+        st.error(f"❌ Failed to create matching details report: {str(e)}")
+
+    # WTH MPCS REPORT
+    try:
+        st.write("📦 Creating WTH MPCS report...")
+        with pd.ExcelWriter(wth_mpcs_path, engine='openpyxl') as writer:
+            # Create empty dataframe first
+            empty_df = pd.DataFrame()
+            empty_df.to_excel(writer, index=False, startrow=6)
+            workbook = writer.book
+            sheet = writer.sheets['Sheet1']
+            
+            add_dhl_branding_to_excel(workbook, sheet, "DHL WTH MPCS Report")
+            
+            headers = ['CONSIGNEE_NAME', 'ZIP', 'CITY', 'PIECES', 'WEIGHT', 'VOLUMETRIC_WEIGHT', 'HWB', '', '', 'TRIGGER_REASON']
+            for col_idx, header in enumerate(headers, 1):
+                cell = sheet.cell(row=6, column=col_idx, value=header)
+                cell.font = Font(bold=True)
+            
+            current_row = 7
+            
+            if not threshold_special_cases.empty:
+                threshold_cases_for_wth = threshold_special_cases.groupby('HWB').agg({
+                    'CONSIGNEE_NAME': 'first',
+                    'CONSIGNEE_ZIP': 'first',
+                    'CONSIGNEE_CITY': 'first',
+                    'WEIGHT': 'max',
+                    'VOLUMETRIC_WEIGHT': 'max',
+                    'PIECES': 'first'
+                }).reset_index()
+                
+                def get_trigger_reason_wth(row):
+                    reasons = []
+                    if row['WEIGHT'] > weight_thr: reasons.append(f'Weight >{weight_thr}kg')
+                    if row['VOLUMETRIC_WEIGHT'] > vol_weight_thr: reasons.append(f'Volumetric >{vol_weight_thr}kg')
+                    if row['PIECES'] > pieces_thr: reasons.append(f'Pieces >{pieces_thr}')
+                    return ', '.join(reasons) if reasons else None
+                
+                threshold_cases_for_wth['TRIGGER_REASON'] = threshold_cases_for_wth.apply(get_trigger_reason_wth, axis=1)
+                threshold_cases_for_wth = threshold_cases_for_wth.sort_values(by="CONSIGNEE_ZIP", ascending=True)
+                
+                for _, row in threshold_cases_for_wth.iterrows():
+                    sheet.cell(row=current_row, column=1, value=row['CONSIGNEE_NAME'])
+                    sheet.cell(row=current_row, column=2, value=row['CONSIGNEE_ZIP'])
+                    sheet.cell(row=current_row, column=3, value=row['CONSIGNEE_CITY'])
+                    sheet.cell(row=current_row, column=4, value=row['PIECES'])
+                    sheet.cell(row=current_row, column=5, value=row['WEIGHT'])
+                    sheet.cell(row=current_row, column=6, value=row['VOLUMETRIC_WEIGHT'])
+                    sheet.cell(row=current_row, column=7, value=row['HWB'])
+                    sheet.cell(row=current_row, column=10, value=row['TRIGGER_REASON'])
+                    current_row += 1
+            
+            if not multi_shipment_special.empty:
+                multi_with_city = manifest_df.groupby('CONSIGNEE_NAME_NORM').agg(
+                    total_shipments=('HWB', 'nunique'),
+                    total_pieces=('PIECES', 'sum'),
+                    total_weight=('WEIGHT', 'sum'),
+                    total_vol_weight=('VOLUMETRIC_WEIGHT', 'sum'),
+                    zip_code=('CONSIGNEE_ZIP', 'first'),
+                    consignee_name=('CONSIGNEE_NAME', 'first'),
+                    city=('CONSIGNEE_CITY', 'first')
+                ).reset_index()
+                
+                multi_for_wth = multi_with_city[multi_with_city['total_shipments'] >= multi_shipment_thr].copy()
+                multi_for_wth = multi_for_wth.sort_values(by=['zip_code', 'total_shipments'], ascending=[True, False])
+                
+                for _, row in multi_for_wth.iterrows():
+                    sheet.cell(row=current_row, column=1, value=row['consignee_name'])
+                    sheet.cell(row=current_row, column=2, value=row['zip_code'])
+                    sheet.cell(row=current_row, column=3, value=row['city'])
+                    sheet.cell(row=current_row, column=4, value=row['total_pieces'])
+                    sheet.cell(row=current_row, column=5, value=round(row['total_weight'], 1))
+                    sheet.cell(row=current_row, column=6, value=round(row['total_vol_weight'], 1))
+                    sheet.cell(row=current_row, column=10, value=f'Multiple Shipments ≥{multi_shipment_thr} ({row["total_shipments"]})')
+                    current_row += 1
+            
+            if threshold_special_cases.empty and multi_shipment_special.empty:
+                sheet.cell(row=7, column=1, value="No special cases found")
+            
+            auto_adjust_column_width(sheet)
+        st.success("✅ WTH MPCS report created")
+    except Exception as e:
+        st.error(f"❌ Failed to create WTH MPCS report: {str(e)}")
+
+    # PRIORITY SHIPMENTS
+    try:
+        st.write("🚨 Creating priority shipments report...")
+        if 'PCC' in manifest_df.columns:
+            manifest_df['PCC'] = manifest_df['PCC'].astype(str).str.strip().str.upper()
+            priority_codes = ['CMX', 'WMX', 'TDT', 'TDY']
+            priority_pccs = manifest_df[manifest_df['PCC'].isin(priority_codes)]
+            if not priority_pccs.empty:
+                group1 = priority_pccs[priority_pccs['PCC'].isin(['CMX', 'WMX'])].sort_values(
+                    by=['CONSIGNEE_ZIP', 'MATCHED_ROUTE'], ascending=[True, True])
+                group2 = priority_pccs[priority_pccs['PCC'].isin(['TDT', 'TDY'])].sort_values(
+                    by=['CONSIGNEE_ZIP', 'MATCHED_ROUTE'], ascending=[True, True])
+                
+                with pd.ExcelWriter(priority_path, engine='openpyxl') as writer:
+                    # Create empty dataframe first
+                    empty_df = pd.DataFrame()
+                    empty_df.to_excel(writer, index=False, startrow=6)
+                    workbook = writer.book
+                    sheet = writer.sheets['Sheet1']
+                    
+                    add_dhl_branding_to_excel(workbook, sheet, "DHL Priority Shipments Report")
+                    
+                    cols = ['MATCHED_ROUTE', 'HWB', 'CONSIGNEE_NAME', 'CONSIGNEE_ZIP', 'PCC', 'WEIGHT', 'VOLUMETRIC_WEIGHT', 'PIECES']
+                    header_font = Font(bold=True)
+                    
+                    current_row = 6
+                    sheet.cell(row=current_row, column=1, value="CMX/WMX Priority Shipments").font = header_font
+                    current_row += 2
+                    
+                    for col_idx, col in enumerate(cols, 1):
+                        sheet.cell(row=current_row, column=col_idx, value=col).font = header_font
+                    current_row += 1
+                    
+                    for row_idx, row in enumerate(dataframe_to_rows(group1[cols], index=False, header=False), current_row):
+                        for col_idx, value in enumerate(row, 1):
+                            sheet.cell(row=row_idx, column=col_idx, value=value)
+                    
+                    current_row = sheet.max_row + 3
+                    sheet.cell(row=current_row, column=1, value="TDT/TDY Priority Shipments").font = header_font
+                    current_row += 2
+                    
+                    for col_idx, col in enumerate(cols, 1):
+                        sheet.cell(row=current_row, column=col_idx, value=col).font = header_font
+                    current_row += 1
+                    
+                    for row_idx, row in enumerate(dataframe_to_rows(group2[cols], index=False, header=False), current_row):
+                        for col_idx, value in enumerate(row, 1):
+                            sheet.cell(row=row_idx, column=col_idx, value=value)
+                    
+                    auto_adjust_column_width(sheet)
+            else:
+                with pd.ExcelWriter(priority_path, engine='openpyxl') as writer:
+                    empty_df = pd.DataFrame()
+                    empty_df.to_excel(writer, index=False, startrow=6)
+                    workbook = writer.book
+                    sheet = writer.sheets['Sheet1']
+                    add_dhl_branding_to_excel(workbook, sheet, "DHL Priority Shipments Report")
+                    sheet.cell(row=6, column=1, value="No priority shipments found")
+        else:
+            with pd.ExcelWriter(priority_path, engine='openpyxl') as writer:
+                empty_df = pd.DataFrame()
+                empty_df.to_excel(writer, index=False, startrow=6)
+                workbook = writer.book
+                sheet = writer.sheets['Sheet1']
+                add_dhl_branding_to_excel(workbook, sheet, "DHL Priority Shipments Report")
+                sheet.cell(row=6, column=1, value="No PCC data available")
+        st.success("✅ Priority shipments report created")
+    except Exception as e:
+        st.error(f"❌ Failed to create priority shipments report: {str(e)}")
 
     return timestamp, route_summary, specialized_reports, multi_shipments_path, targets_df
 
@@ -1348,11 +1392,29 @@ def main():
             multi_shipment_thr
         )
 
-        # Enhanced DHL branded SPR metric with Service Partner breakdown - FIXED VERSION
+        # Debug: Check which files were created
+        st.write("🔍 **Debug: Generated Files**")
+        expected_files = [
+            f"DHL_route_summary_{timestamp}.xlsx",
+            f"DHL_special_cases_{timestamp}.xlsx", 
+            f"DHL_matching_details_{timestamp}.xlsx",
+            f"DHL_WTH_MPCS_Report_{timestamp}.xlsx",
+            f"DHL_Priority_Shipments_{timestamp}.xlsx",
+            f"DHL_multi_shipments_{timestamp}.xlsx"
+        ]
+        
+        for filename in expected_files:
+            filepath = f"{output_path}/{filename}"
+            if os.path.exists(filepath):
+                file_size = os.path.getsize(filepath)
+                st.success(f"✅ {filename} ({file_size} bytes)")
+            else:
+                st.error(f"❌ {filename} - NOT FOUND")
+
+        # Enhanced DHL branded SPR metric with Service Partner breakdown
         if not route_summary.empty and 'Predicted Stops' in route_summary:
             predicted_spr = route_summary['Predicted Stops'].mean()
             
-            # Calculate service partner SPR summary with debug info for troubleshooting
             spr_summary = calculate_service_partner_spr(route_summary, targets_df)
             
             st.markdown(f"""
@@ -1464,37 +1526,60 @@ def main():
             st.warning("⚠️ Email mapping not found. Create `input/email_mapping.xlsx` to enable automated emailing.")
             st.info("ℹ️ **Required columns:** Report_Type, Email, Contact_Name")
         
-        # Enhanced Standard Reports Section
+        # Enhanced Standard Reports Section with File Existence Checks
         st.subheader("📊 DHL Standard Reports")
         st.markdown("*Professional reports with enhanced DHL branding, Service Partner SPR summary, and 'Excellence. Simply delivered.' tagline*")
         col1, col2, col3 = st.columns(3)
         with col1:
-            with open(f"{output_path}/DHL_route_summary_{timestamp}.xlsx", "rb") as f:
-                st.download_button("📋 Route Summary", f, f"DHL_route_summary_{timestamp}.xlsx",
-                                  help="Complete route analysis with DHL branding and Service Partner SPR summary")
+            summary_file = f"{output_path}/DHL_route_summary_{timestamp}.xlsx"
+            if os.path.exists(summary_file):
+                with open(summary_file, "rb") as f:
+                    st.download_button("📋 Route Summary", f, f"DHL_route_summary_{timestamp}.xlsx",
+                                      help="Complete route analysis with DHL branding and Service Partner SPR summary")
+            else:
+                st.error("❌ Route Summary file not found")
         with col2:
-            with open(f"{output_path}/DHL_special_cases_{timestamp}.xlsx", "rb") as f:
-                st.download_button("⚠️ Special Cases", f, f"DHL_special_cases_{timestamp}.xlsx",
-                                  help="Special handling requirements with vehicle suggestions")
+            special_cases_file = f"{output_path}/DHL_special_cases_{timestamp}.xlsx"
+            if os.path.exists(special_cases_file):
+                with open(special_cases_file, "rb") as f:
+                    st.download_button("⚠️ Special Cases", f, f"DHL_special_cases_{timestamp}.xlsx",
+                                      help="Special handling requirements with vehicle suggestions")
+            else:
+                st.error("❌ Special Cases file not found")
         with col3:
-            with open(f"{output_path}/DHL_matching_details_{timestamp}.xlsx", "rb") as f:
-                st.download_button("🔍 Matching Details", f, f"DHL_matching_details_{timestamp}.xlsx",
-                                  help="Address matching methodology and scores")
+            matching_file = f"{output_path}/DHL_matching_details_{timestamp}.xlsx"
+            if os.path.exists(matching_file):
+                with open(matching_file, "rb") as f:
+                    st.download_button("🔍 Matching Details", f, f"DHL_matching_details_{timestamp}.xlsx",
+                                      help="Address matching methodology and scores")
+            else:
+                st.error("❌ Matching Details file not found")
 
         st.subheader("📈 DHL Additional Reports")
         col4, col5, col6 = st.columns(3)
         with col4:
-            with open(f"{output_path}/DHL_WTH_MPCS_Report_{timestamp}.xlsx", "rb") as f:
-                st.download_button("📦 WTH MPCS Report", f, f"DHL_WTH_MPCS_Report_{timestamp}.xlsx",
-                                  help="Weight/Volume/Multi-shipment analysis")
+            wth_file = f"{output_path}/DHL_WTH_MPCS_Report_{timestamp}.xlsx"
+            if os.path.exists(wth_file):
+                with open(wth_file, "rb") as f:
+                    st.download_button("📦 WTH MPCS Report", f, f"DHL_WTH_MPCS_Report_{timestamp}.xlsx",
+                                      help="Weight/Volume/Multi-shipment analysis")
+            else:
+                st.error("❌ WTH MPCS Report file not found")
         with col5:
-            with open(f"{output_path}/DHL_Priority_Shipments_{timestamp}.xlsx", "rb") as f:
-                st.download_button("🚨 Priority Shipments", f, f"DHL_Priority_Shipments_{timestamp}.xlsx",
-                                  help="CMX/WMX and TDT/TDY priority handling")
+            priority_file = f"{output_path}/DHL_Priority_Shipments_{timestamp}.xlsx"
+            if os.path.exists(priority_file):
+                with open(priority_file, "rb") as f:
+                    st.download_button("🚨 Priority Shipments", f, f"DHL_Priority_Shipments_{timestamp}.xlsx",
+                                      help="CMX/WMX and TDT/TDY priority handling")
+            else:
+                st.error("❌ Priority Shipments file not found")
         with col6:
-            with open(multi_shipments_path, "rb") as f:
-                st.download_button("📊 Multiple Shipments", f, f"DHL_multi_shipments_{timestamp}.xlsx",
-                                  help="Customers with multiple shipments analysis")
+            if os.path.exists(multi_shipments_path):
+                with open(multi_shipments_path, "rb") as f:
+                    st.download_button("📊 Multiple Shipments", f, f"DHL_multi_shipments_{timestamp}.xlsx",
+                                      help="Customers with multiple shipments analysis")
+            else:
+                st.error("❌ Multiple Shipments file not found")
 
         st.subheader("🚛 DHL Specialized Route Reports")
         st.markdown("*Route-specific reports for operational teams with enhanced DHL branding*")
