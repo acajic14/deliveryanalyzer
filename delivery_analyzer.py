@@ -140,7 +140,9 @@ def load_targets(path):
             # Check if SERVICE_PARTNER column has valid data
             non_null_sp = df_mapped[df_mapped['SERVICE_PARTNER'].notna() & (df_mapped['SERVICE_PARTNER'] != 'nan') & (df_mapped['SERVICE_PARTNER'] != '')]
             
-            if len(non_null_sp) > 0:
+            if len(non_null_sp) == 0:
+                st.error("❌ Column E (SERVICE_PARTNER) appears to be empty after processing!")
+            else:
                 st.success(f"✅ Found {len(non_null_sp)} routes with service partner assignments")
             
             return df_mapped
@@ -206,10 +208,10 @@ def calculate_service_partner_spr(route_summary, targets_df):
         # Calculate predicted SPR per service partner
         spr_summary['Predicted_SPR'] = spr_summary['Predicted Stops'] / spr_summary['Current_Routes']
         
-        # **ROUTE ADJUSTMENT CALCULATION**: Calculate target routes needed to achieve target SPR
+        # **RESTORED FUNCTIONALITY**: Calculate target routes needed to achieve target SPR
         spr_summary['Target_Routes_Needed'] = spr_summary['Predicted Stops'] / spr_summary['SPR']
         
-        # **ROUTE ADJUSTMENT CALCULATION**: Calculate routes to add/remove
+        # **RESTORED FUNCTIONALITY**: Calculate routes to add/remove
         spr_summary['Routes_to_Adjust'] = spr_summary['Target_Routes_Needed'] - spr_summary['Current_Routes']
         
         # Round values for display
@@ -223,9 +225,9 @@ def calculate_service_partner_spr(route_summary, targets_df):
         spr_summary['AVG_ROUTES'] = spr_summary['AVG_ROUTES'].fillna(0).astype(int)
         spr_summary['SPR'] = spr_summary['SPR'].fillna(0).round(1)
         
-        # Clean up columns with the route calculations included
-        spr_summary = spr_summary[['LIST_OF_SP', 'SUM_TARGET_STOPS', 'Current_Routes', 'SPR', 'Predicted Stops', 'Predicted_SPR', 'Routes_to_Adjust', 'Percent_of_Target']]
-        spr_summary.columns = ['Service Partner', 'Target Stops', 'Current Routes', 'SPR Target', 'Predicted Stops', 'Predicted SPR', 'Routes to Add/Remove', 'Percent of Target (%)']
+        # Clean up columns with the restored route calculations
+        spr_summary = spr_summary[['LIST_OF_SP', 'SUM_TARGET_STOPS', 'Current_Routes', 'SPR', 'Predicted Stops', 'Predicted_SPR', 'Target_Routes_Needed', 'Routes_to_Adjust', 'Percent_of_Target']]
+        spr_summary.columns = ['Service Partner', 'Target Stops', 'Current Routes', 'SPR Target', 'Predicted Stops', 'Predicted SPR', 'Target Routes Needed', 'Routes to Add/Remove', 'Percent of Target (%)']
         
         return spr_summary
         
@@ -234,7 +236,7 @@ def calculate_service_partner_spr(route_summary, targets_df):
         return pd.DataFrame()
 
 def add_service_partner_spr_summary(workbook, sheet, spr_summary):
-    """Add service partner SPR summary with route adjustment recommendations"""
+    """Add service partner SPR summary with route calculations"""
     if spr_summary.empty:
         return 0
     
@@ -251,8 +253,8 @@ def add_service_partner_spr_summary(workbook, sheet, spr_summary):
     
     # Title
     title_row = insert_row
-    sheet.merge_cells(f'A{title_row}:H{title_row}')  # Extended to column H for new column
-    sheet[f'A{title_row}'] = 'DHL Service Partner SPR Summary with Route Recommendations'
+    sheet.merge_cells(f'A{title_row}:I{title_row}')  # Extended to column I
+    sheet[f'A{title_row}'] = 'DHL Service Partner SPR Summary with Route Optimization'
     sheet[f'A{title_row}'].font = Font(bold=True, size=14, color="FFFFFF")
     sheet[f'A{title_row}'].fill = dhl_red
     sheet[f'A{title_row}'].alignment = Alignment(horizontal='center', vertical='center')
@@ -272,23 +274,23 @@ def add_service_partner_spr_summary(workbook, sheet, spr_summary):
         for col_num, value in enumerate(row, 1):
             cell = sheet.cell(row=data_start_row + idx, column=col_num, value=value)
             
+            # Highlight Routes to Add/Remove column
+            if headers[col_num-1] == 'Routes to Add/Remove':
+                if value > 0:
+                    cell.font = Font(color="FF0000", bold=True)  # Red for routes to add
+                elif value < 0:
+                    cell.font = Font(color="008000", bold=True)  # Green for routes to remove
+                else:
+                    cell.font = Font(color="000000", bold=True)  # Black for no change
+            
             # Highlight percentage column based on performance
-            if headers[col_num-1] == 'Percent of Target (%)':
+            elif headers[col_num-1] == 'Percent of Target (%)':
                 if value >= 100:
                     cell.font = Font(color="008000", bold=True)  # Green for over target
                 elif value >= 90:
                     cell.font = Font(color="FFA500", bold=True)  # Orange for close to target
                 else:
                     cell.font = Font(color="FF0000", bold=True)  # Red for under target
-            
-            # Highlight route adjustment column
-            elif headers[col_num-1] == 'Routes to Add/Remove':
-                if value < -0.5:
-                    cell.font = Font(color="FF0000", bold=True)  # Red for routes to remove
-                elif value > 0.5:
-                    cell.font = Font(color="008000", bold=True)  # Green for routes to add
-                else:
-                    cell.font = Font(color="FFA500", bold=True)  # Orange for balanced
     
     return rows_needed
 
@@ -755,7 +757,7 @@ def generate_reports(
     priority_path = f"{output_path}/DHL_Priority_Shipments_{timestamp}.xlsx"
     multi_shipments_path = f"{output_path}/DHL_multi_shipments_{timestamp}.xlsx"
 
-    # 1. ROUTE SUMMARY REPORT WITH ROUTE CALCULATIONS
+    # 1. ROUTE SUMMARY REPORT WITH RESTORED ROUTE CALCULATIONS
     try:
         st.write("📊 Creating route summary report...")
         with pd.ExcelWriter(summary_path, engine='openpyxl') as writer:
@@ -872,7 +874,7 @@ def generate_reports(
     except Exception as e:
         st.error(f"❌ Failed to create route summary: {str(e)}")
 
-    # 2. SPECIALIZED REPORTS - CREATED BEFORE RETURN
+    # 2. SPECIALIZED REPORTS
     st.write("🚛 Creating specialized route reports...")
     specialized_reports['MBX'] = create_specialized_report(manifest_df, ['MB1', 'MB2'], 'MBX', output_path, timestamp)
     specialized_reports['KRA'] = create_specialized_report(manifest_df, ['KR1', 'KR2'], 'KRA', output_path, timestamp)
@@ -1249,124 +1251,447 @@ def generate_reports(
 
     # RETURN ALL RESULTS - THIS IS THE ONLY RETURN STATEMENT IN THE FUNCTION
     return timestamp, route_summary, specialized_reports, multi_shipments_path, targets_df
-    ########################################################
-    # SPECIAL CASES, MULTI-SHIPMENTS, MATCH DETAILS, WTH,
-    # PRIORITY SHIPMENTS  ➜  all created with ExcelWriter
-    ########################################################
-
-    ## ---------- 1. SPECIAL CASES (threshold & multi-shipment) ----------
-    special_cases_path = f"{output_path}/DHL_special_cases_{timestamp}.xlsx"
-
-    threshold_mask = (
-        (manifest_df['WEIGHT'] > weight_thr) |
-        (manifest_df['VOLUMETRIC_WEIGHT'] > vol_weight_thr) |
-        (manifest_df['PIECES'] > pieces_thr)
-    )
-    threshold_cases = manifest_df[threshold_mask].copy()
-
-    customer_stats = (
-        manifest_df.groupby('CONSIGNEE_NAME_NORM')
-                   .agg(total_shipments=('HWB', 'nunique'),
-                        total_pieces=('PIECES', 'sum'),
-                        zip_code=('CONSIGNEE_ZIP', 'first'),
-                        consignee_name=('CONSIGNEE_NAME', 'first'),
-                        matched_route=('MATCHED_ROUTE', 'first'))
-                   .reset_index()
-    )
-    multi_cases = customer_stats[customer_stats.total_shipments >= multi_shipment_thr]
-
-    with pd.ExcelWriter(special_cases_path, engine="openpyxl") as writer:
-        # ‑- Threshold cases sheet
-        threshold_sheet_name = "Threshold Cases"
-        if not threshold_cases.empty:
-            cols = ["HWB", "CONSIGNEE_NAME", "CONSIGNEE_ZIP", "MATCHED_ROUTE",
-                    "WEIGHT", "VOLUMETRIC_WEIGHT", "PIECES"]
-            threshold_cases.to_excel(writer, sheet_name=threshold_sheet_name,
-                                     index=False, startrow=5, columns=cols)
-            add_dhl_branding_to_excel(writer.book,
-                                      writer.sheets[threshold_sheet_name],
-                                      "DHL Special Cases Report")
-            auto_adjust_column_width(writer.sheets[threshold_sheet_name])
-        # ‑- Multi-shipment sheet
-        multi_sheet_name = "Multi-Shipments"
-        if not multi_cases.empty:
-            cols = ["consignee_name", "zip_code", "matched_route",
-                    "total_shipments", "total_pieces"]
-            multi_cases.to_excel(writer, sheet_name=multi_sheet_name,
-                                 index=False, startrow=5, columns=cols)
-            add_dhl_branding_to_excel(writer.book,
-                                      writer.sheets[multi_sheet_name],
-                                      f"DHL Multi-Shipment (≥{multi_shipment_thr})")
-            auto_adjust_column_width(writer.sheets[multi_sheet_name])
-
-    ## ---------- 2. MATCHING DETAILS ----------
-    matching_details_path = f"{output_path}/DHL_matching_details_{timestamp}.xlsx"
-    match_cols = ["HWB", "CONSIGNEE_NAME", "CONSIGNEE_ZIP",
-                  "CONSIGNEE_ADDRESS", "MATCHED_ROUTE", "MATCH_METHOD"]
-    with pd.ExcelWriter(matching_details_path, engine="openpyxl") as writer:
-        manifest_df[match_cols].to_excel(writer, index=False, startrow=5)
-        add_dhl_branding_to_excel(writer.book, writer.sheets["Sheet1"],
-                                  "DHL Route Matching Details")
-        auto_adjust_column_width(writer.sheets["Sheet1"])
-
-    ## ---------- 3. WTH / MPCS REPORT ----------
-    wth_path = f"{output_path}/DHL_WTH_MPCS_Report_{timestamp}.xlsx"
-    wth_cols = ["CONSIGNEE_NAME", "CONSIGNEE_ZIP", "CONSIGNEE_CITY",
-                "PIECES", "WEIGHT", "VOLUMETRIC_WEIGHT", "HWB"]
-    wth_df = pd.concat([threshold_cases[wth_cols], multi_cases.rename(
-        columns={"consignee_name": "CONSIGNEE_NAME",
-                 "zip_code": "CONSIGNEE_ZIP"})[wth_cols]], ignore_index=True)
-    with pd.ExcelWriter(wth_path, engine="openpyxl") as writer:
-        if wth_df.empty:
-            pd.DataFrame(columns=wth_cols).to_excel(writer, index=False, startrow=5)
-        else:
-            wth_df.to_excel(writer, index=False, startrow=5)
-        add_dhl_branding_to_excel(writer.book, writer.sheets["Sheet1"],
-                                  "DHL WTH / MPCS Report")
-        auto_adjust_column_width(writer.sheets["Sheet1"])
-
-    ## ---------- 4. PRIORITY SHIPMENTS ----------
-    priority_path = f"{output_path}/DHL_Priority_Shipments_{timestamp}.xlsx"
-    if "PCC" in manifest_df.columns:
-        pr_codes = ["CMX", "WMX", "TDT", "TDY"]
-        pr_df = manifest_df[manifest_df.PCC.isin(pr_codes)]
-    else:
-        pr_df = pd.DataFrame()
-
-    with pd.ExcelWriter(priority_path, engine="openpyxl") as writer:
-        if pr_df.empty:
-            pd.DataFrame().to_excel(writer, index=False, startrow=5)
-        else:
-            pr_df.to_excel(writer, index=False, startrow=5,
-                           columns=["MATCHED_ROUTE", "HWB", "CONSIGNEE_NAME",
-                                    "CONSIGNEE_ZIP", "PCC", "WEIGHT",
-                                    "VOLUMETRIC_WEIGHT", "PIECES"])
-        add_dhl_branding_to_excel(writer.book, writer.sheets["Sheet1"],
-                                  "DHL Priority Shipments")
-        auto_adjust_column_width(writer.sheets["Sheet1"])
-
-    ## ---------- 5. MULTI-SHIPMENT CUSTOMERS ----------
-    multi_ship_path = f"{output_path}/DHL_multi_shipments_{timestamp}.xlsx"
-    multi_customers = identify_multi_shipment_customers(manifest_df)
-    with pd.ExcelWriter(multi_ship_path, engine="openpyxl") as writer:
-        multi_customers.to_excel(writer, index=False, startrow=5)
-        add_dhl_branding_to_excel(writer.book, writer.sheets["Sheet1"],
-                                  "DHL Multiple Shipments")
-        auto_adjust_column_width(writer.sheets["Sheet1"])
-
-    ########################################################
-    # RETURN EVERYTHING NEEDED BY THE MAIN APP
-    ########################################################
-    return (timestamp, route_summary, specialized_reports,
-            multi_ship_path, targets_df)
-
-
-# ─────────────────────────  MAIN  ───────────────────────── #
 def main():
-    # --- Streamlit page & sidebar omitted for brevity (unchanged) ---
-    # upload, processing & UI code stays the same …
-    pass  # ← keep rest of main as in previous parts
+    # Enhanced DHL Branding Configuration
+    st.set_page_config(
+        page_title="DHL Express - Route Analyzer",
+        page_icon="📦",
+        layout="wide",
+        initial_sidebar_state="expanded"
+    )
+    
+    # Enhanced DHL Custom CSS
+    st.markdown("""
+    <style>
+    .main-header {
+        background: linear-gradient(90deg, #FFCC00 0%, #D40511 100%);
+        padding: 1.5rem;
+        border-radius: 15px;
+        margin-bottom: 2rem;
+        box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+    }
+    .main-header h1 {
+        color: white;
+        text-align: center;
+        margin: 0;
+        font-weight: bold;
+        text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+        font-size: 2.5rem;
+    }
+    .main-header p {
+        color: white;
+        text-align: center;
+        margin: 0.5rem 0 0 0;
+        font-style: italic;
+        font-size: 1.2rem;
+        text-shadow: 1px 1px 2px rgba(0,0,0,0.3);
+    }
+    .dhl-metric {
+        background: linear-gradient(135deg, #FFCC00 0%, #FFD700 100%);
+        padding: 1.5rem;
+        border-radius: 10px;
+        border-left: 6px solid #D40511;
+        margin: 1rem 0;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    .dhl-success {
+        background: linear-gradient(90deg, #FFCC00 0%, #D40511 100%);
+        padding: 1.5rem;
+        border-radius: 15px;
+        text-align: center;
+        margin: 1.5rem 0;
+        box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+    }
+    .dhl-sidebar {
+        background: linear-gradient(135deg, #FFCC00 0%, #FFD700 100%);
+        padding: 1rem;
+        border-radius: 10px;
+        margin-bottom: 1rem;
+        text-align: center;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    .sidebar .sidebar-content {
+        background-color: #f8f9fa;
+    }
+    .dhl-footer {
+        background: linear-gradient(90deg, #D40511 0%, #B8040F 100%);
+        color: white;
+        text-align: center;
+        padding: 2rem;
+        border-radius: 10px;
+        margin-top: 2rem;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    .service-partner-table {
+        background: white;
+        border-radius: 10px;
+        padding: 1rem;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        margin: 1rem 0;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+    
+    # Enhanced DHL Header
+    st.markdown("""
+    <div class="main-header">
+        <h1>🚚 DHL EXPRESS</h1>
+        <p>Route Analyzer - Excellence. Simply delivered.</p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Enhanced Sidebar DHL Branding
+    st.sidebar.markdown("""
+    <div class="dhl-sidebar">
+        <h3 style="color: #D40511; margin: 0; font-size: 1.4rem;">📦 DHL EXPRESS</h3>
+        <p style="margin: 0.5rem 0 0 0; font-size: 11px; color: #666; font-style: italic;">Excellence. Simply delivered.</p>
+        <hr style="margin: 0.5rem 0; border-color: #D40511;">
+        <p style="margin: 0; font-size: 10px; color: #999;">Route Optimization System</p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    st.sidebar.header("📧 Email Configuration")
+    smtp_server = st.sidebar.text_input("SMTP Server", value="smtp.gmail.com")
+    smtp_port = st.sidebar.number_input("SMTP Port", value=587)
+    sender_email = st.sidebar.text_input("Sender Email")
+    sender_password = st.sidebar.text_input("Email Password", type="password")
+    
+    st.sidebar.markdown("---")
+    st.sidebar.header("⚙️ Analysis Settings")
+    weight_thr = st.sidebar.number_input("Weight Threshold (kg)", value=70)
+    vol_weight_thr = st.sidebar.number_input("Volumetric Weight Threshold (kg)", value=150)
+    pieces_thr = st.sidebar.number_input("Pieces Threshold", value=6)
+    
+    multi_shipment_thr = st.sidebar.number_input(
+        "Multi-Shipment Threshold for Special Cases", 
+        min_value=2, 
+        value=5, 
+        help="Minimum number of shipments for a customer to be included in the special cases report"
+    )
+    
+    st.sidebar.subheader("🚛 Vehicle Suggestions")
+    vehicle_weight_thr = st.sidebar.number_input("Truck weight threshold (kg)", value=70)
+    vehicle_vol_thr = st.sidebar.number_input("Truck volumetric threshold (kg)", value=150)
+    vehicle_pieces_thr = st.sidebar.number_input("Truck pieces threshold", value=12)
+    vehicle_kg_per_piece_thr = st.sidebar.number_input("Max kg/piece for Van", value=10)
+    vehicle_van_max_pieces = st.sidebar.number_input("Max pieces for Van", value=20)
 
+    st.subheader("📁 Upload Manifest Files")
+    upload_mode = st.radio(
+        "Upload Mode:",
+        ["Single File", "Multiple Files (Auto-merge)"],
+        horizontal=True
+    )
+    if upload_mode == "Single File":
+        uploaded_file = st.file_uploader("Upload Manifest File", type=["xlsx", "xls", "csv"])
+        uploaded_files = [uploaded_file] if uploaded_file else []
+    else:
+        uploaded_files = st.file_uploader(
+            "Upload Multiple Manifest Files", 
+            type=["xlsx", "xls", "csv"],
+            accept_multiple_files=True,
+            help="Upload 1-5 CSV/Excel files - they will be automatically merged"
+        )
+    if uploaded_files:
+        st.info(f"ℹ️ Processing {len(uploaded_files)} file(s)...")
+        if len(uploaded_files) > 1:
+            st.write("📋 **Files to merge:**")
+            for i, file in enumerate(uploaded_files, 1):
+                st.write(f"{i}. {file.name}")
+        if len(uploaded_files) == 1:
+            merged_manifest = process_manifest(uploaded_files[0])
+        else:
+            merged_manifest = process_multiple_manifests(uploaded_files)
+        if merged_manifest.empty:
+            st.error("❌ No valid data found in uploaded files")
+            return
+            
+        st.info("ℹ️ Loading route databases...")
+        street_city_routes = load_street_city_routes('input/route_street_city.xlsx')
+        fallback_routes = load_fallback_routes('input/routes_database.xlsx')
+        
+        st.info("ℹ️ Matching addresses to routes...")
+        matched_manifest = match_address_to_route(merged_manifest, street_city_routes, fallback_routes)
+        
+        output_path = "output"
+        os.makedirs(output_path, exist_ok=True)
+        timestamp, route_summary, specialized_reports, multi_shipments_path, targets_df = generate_reports(
+            matched_manifest, output_path,
+            weight_thr, vol_weight_thr, pieces_thr,
+            vehicle_weight_thr, vehicle_vol_thr,
+            vehicle_pieces_thr, vehicle_kg_per_piece_thr, vehicle_van_max_pieces,
+            multi_shipment_thr
+        )
 
-if __name__ == "__main__": 
+        # Enhanced DHL branded SPR metric with Service Partner breakdown and Route Calculations
+        if not route_summary.empty and 'Predicted Stops' in route_summary:
+            predicted_spr = route_summary['Predicted Stops'].mean()
+            
+            spr_summary = calculate_service_partner_spr(route_summary, targets_df)
+            
+            st.markdown(f"""
+            <div class="dhl-metric">
+                <h3 style="color: #D40511; margin: 0; font-size: 1.3rem;">📊 Overall Predicted SPR</h3>
+                <h1 style="color: #D40511; margin: 0.5rem 0; font-size: 2.5rem;">{predicted_spr:.1f}</h1>
+                <p style="margin: 0; color: #666; font-style: italic;">Average Predicted Stops Per Route</p>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            if not spr_summary.empty:
+                st.subheader("🤝 Service Partner Performance Summary")
+                st.markdown("*Real-time performance analysis with route optimization recommendations*")
+                
+                st.markdown("""
+                <div class="service-partner-table">
+                """, unsafe_allow_html=True)
+                
+                st.dataframe(
+                    spr_summary.style.format({
+                        'Target Stops': '{:,}',
+                        'Current Routes': '{:,}',
+                        'Predicted Stops': '{:,.1f}',
+                        'Predicted SPR': '{:.1f}',
+                        'SPR Target': '{:.1f}',
+                        'Target Routes Needed': '{:.1f}',
+                        'Routes to Add/Remove': '{:+.1f}',
+                        'Percent of Target (%)': '{:.1f}%'
+                    }).applymap(
+                        lambda x: 'color: green; font-weight: bold' if isinstance(x, (int, float)) and x >= 100 
+                        else 'color: orange; font-weight: bold' if isinstance(x, (int, float)) and 90 <= x < 100
+                        else 'color: red; font-weight: bold' if isinstance(x, (int, float)) and x < 90
+                        else '', subset=['Percent of Target (%)']
+                    ).applymap(
+                        lambda x: 'color: red; font-weight: bold' if isinstance(x, (int, float)) and x > 0.5
+                        else 'color: green; font-weight: bold' if isinstance(x, (int, float)) and x < -0.5
+                        else 'color: orange; font-weight: bold' if isinstance(x, (int, float)) and abs(x) <= 0.5
+                        else '', subset=['Routes to Add/Remove']
+                    ), 
+                    use_container_width=True
+                )
+                
+                st.markdown("</div>", unsafe_allow_html=True)
+                
+                col1, col2, col3, col4 = st.columns(4)
+                with col1:
+                    over_target = len(spr_summary[spr_summary['Percent of Target (%)'] >= 100])
+                    st.metric("Partners Over Target", over_target, delta=f"of {len(spr_summary)}")
+                with col2:
+                    avg_performance = spr_summary['Percent of Target (%)'].mean()
+                    st.metric("Average Performance", f"{avg_performance:.1f}%")
+                with col3:
+                    total_predicted = spr_summary['Predicted Stops'].sum()
+                    total_target = spr_summary['Target Stops'].sum()
+                    st.metric("Total Predicted Stops", f"{total_predicted:.0f}", delta=f"Target: {total_target}")
+                with col4:
+                    routes_to_remove = spr_summary[spr_summary['Routes to Add/Remove'] < 0]['Routes to Add/Remove'].sum()
+                    routes_to_add = spr_summary[spr_summary['Routes to Add/Remove'] > 0]['Routes to Add/Remove'].sum()
+                    st.metric("Net Route Adjustment", f"{routes_to_remove + routes_to_add:+.1f}", 
+                             delta=f"Remove: {abs(routes_to_remove):.1f}, Add: {routes_to_add:.1f}")
+                
+                st.markdown("### 📈 Performance Insights & Route Recommendations")
+                if avg_performance >= 100:
+                    st.success(f"🎯 **Excellent Performance!** All service partners are meeting or exceeding targets with {avg_performance:.1f}% average performance.")
+                elif avg_performance >= 90:
+                    st.warning(f"⚠️ **Good Performance** with room for improvement. Average performance: {avg_performance:.1f}%")
+                else:
+                    st.error(f"🚨 **Performance Below Target** - Average performance: {avg_performance:.1f}%. Review capacity and route optimization.")
+                
+                # Route adjustment recommendations
+                partners_to_reduce = spr_summary[spr_summary['Routes to Add/Remove'] < -0.5]
+                partners_to_expand = spr_summary[spr_summary['Routes to Add/Remove'] > 0.5]
+                
+                if not partners_to_reduce.empty:
+                    st.warning("📉 **Partners with excess capacity** (consider removing routes):")
+                    for _, partner in partners_to_reduce.iterrows():
+                        st.write(f"• **{partner['Service Partner']}**: Remove {abs(partner['Routes to Add/Remove']):.1f} routes to optimize SPR")
+                
+                if not partners_to_expand.empty:
+                    st.info("📈 **Partners with capacity for expansion** (consider adding routes):")
+                    for _, partner in partners_to_expand.iterrows():
+                        st.write(f"• **{partner['Service Partner']}**: Add {partner['Routes to Add/Remove']:.1f} routes to meet targets")
+                
+            else:
+                st.info("ℹ️ Service Partner SPR data not available.")
+        else:
+            st.warning("⚠️ No routes matched - cannot calculate SPR")
+        
+        st.markdown("""
+        <div class="dhl-success">
+            <h2 style="color: white; margin: 0; font-size: 1.8rem;">🎉 DHL Route Analysis Complete!</h2>
+            <p style="color: white; margin: 0.5rem 0 0 0; font-size: 1.1rem; font-style: italic;">Excellence. Simply delivered.</p>
+            <p style="color: white; margin: 0.5rem 0 0 0; font-size: 0.9rem;">All reports generated successfully with DHL branding, TDL priority shipments, and route optimization calculations</p>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        # Email Automation Section
+        st.subheader("📧 DHL Email Automation")
+        email_mapping = load_email_mapping('input/email_mapping.xlsx')
+        
+        if not email_mapping.empty:
+            st.write(f"📋 Email mapping loaded: {len(email_mapping)} recipients configured")
+            with st.expander("👥 View Email Recipients"):
+                st.dataframe(email_mapping)
+            
+            col_email1, col_email2 = st.columns(2)
+            with col_email1:
+                if st.button("📤 Send DHL Route Reports", type="primary", key="send_emails"):
+                    if sender_email and sender_password:
+                        with st.spinner("Sending DHL branded reports..."):
+                            results = send_route_reports(
+                                route_summary, specialized_reports, email_mapping, 
+                                output_path, timestamp, smtp_server, smtp_port, 
+                                sender_email, sender_password
+                            )
+                        
+                        st.subheader("📬 Email Sending Results")
+                        for report_type, contact, success, message in results:
+                            if success:
+                                st.success(message)
+                            else:
+                                st.error(message)
+                    else:
+                        st.error("❌ Please configure email settings in the sidebar")
+            with col_email2:
+                st.info("ℹ️ **Email Setup Required:**\n\n"
+                       "Create `input/email_mapping.xlsx` with columns:\n"
+                       "- **Report_Type** (MBX, KRA, LJU, etc.)\n"
+                       "- **Email** (recipient@domain.com)\n"
+                       "- **Contact_Name** (John Doe)")
+        else:
+            st.warning("⚠️ Email mapping not found. Create `input/email_mapping.xlsx` to enable automated emailing.")
+            st.info("ℹ️ **Required columns:** Report_Type, Email, Contact_Name")
+        
+        # Enhanced Standard Reports Section with File Existence Checks
+        st.subheader("📊 DHL Standard Reports")
+        st.markdown("*Professional reports with enhanced DHL branding, TDL (10:30) and TDT/TDY (12:00) priority shipments, and route optimization calculations*")
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            summary_file = f"{output_path}/DHL_route_summary_{timestamp}.xlsx"
+            if os.path.exists(summary_file):
+                with open(summary_file, "rb") as f:
+                    st.download_button("📋 Route Summary", f, f"DHL_route_summary_{timestamp}.xlsx",
+                                      help="Complete route analysis with DHL branding, Service Partner SPR summary, and route optimization recommendations")
+            else:
+                st.error("❌ Route Summary file not found")
+        with col2:
+            special_cases_file = f"{output_path}/DHL_special_cases_{timestamp}.xlsx"
+            if os.path.exists(special_cases_file):
+                with open(special_cases_file, "rb") as f:
+                    st.download_button("⚠️ Special Cases", f, f"DHL_special_cases_{timestamp}.xlsx",
+                                      help="Special handling requirements with vehicle suggestions")
+            else:
+                st.error("❌ Special Cases file not found")
+        with col3:
+            matching_file = f"{output_path}/DHL_matching_details_{timestamp}.xlsx"
+            if os.path.exists(matching_file):
+                with open(matching_file, "rb") as f:
+                    st.download_button("🔍 Matching Details", f, f"DHL_matching_details_{timestamp}.xlsx",
+                                      help="Address matching methodology and scores")
+            else:
+                st.error("❌ Matching Details file not found")
+
+        st.subheader("📈 DHL Additional Reports")
+        col4, col5, col6 = st.columns(3)
+        with col4:
+            wth_file = f"{output_path}/DHL_WTH_MPCS_Report_{timestamp}.xlsx"
+            if os.path.exists(wth_file):
+                with open(wth_file, "rb") as f:
+                    st.download_button("📦 WTH MPCS Report", f, f"DHL_WTH_MPCS_Report_{timestamp}.xlsx",
+                                      help="Weight/Volume/Multi-shipment analysis")
+            else:
+                st.error("❌ WTH MPCS Report file not found")
+        with col5:
+            priority_file = f"{output_path}/DHL_Priority_Shipments_{timestamp}.xlsx"
+            if os.path.exists(priority_file):
+                with open(priority_file, "rb") as f:
+                    st.download_button("🚨 Priority Shipments", f, f"DHL_Priority_Shipments_{timestamp}.xlsx",
+                                      help="CMX/WMX, TDL (10:30), and TDT/TDY (12:00) priority handling with yellow headers")
+            else:
+                st.error("❌ Priority Shipments file not found")
+        with col6:
+            if os.path.exists(multi_shipments_path):
+                with open(multi_shipments_path, "rb") as f:
+                    st.download_button("📊 Multiple Shipments", f, f"DHL_multi_shipments_{timestamp}.xlsx",
+                                      help="Customers with multiple shipments analysis")
+            else:
+                st.error("❌ Multiple Shipments file not found")
+
+        st.subheader("🚛 DHL Specialized Route Reports")
+        st.markdown("*Route-specific reports for operational teams with enhanced DHL branding*")
+        col7, col8, col9, col10 = st.columns(4)
+        with col7:
+            if 'MBX' in specialized_reports and os.path.exists(specialized_reports['MBX']):
+                with open(specialized_reports['MBX'], "rb") as f:
+                    st.download_button("🏢 MBX Details", f, f"DHL_MBX_details_{timestamp}.xlsx",
+                                      help="Maribor routes (MB1 and MB2)")
+            else:
+                st.write("No MBX shipments")
+        with col8:
+            if 'KRA' in specialized_reports and os.path.exists(specialized_reports['KRA']):
+                with open(specialized_reports['KRA'], "rb") as f:
+                    st.download_button("🏔️ KRA Details", f, f"DHL_KRA_details_{timestamp}.xlsx",
+                                      help="Kranj routes (KR1 and KR2)")
+            else:
+                st.write("No KRA shipments")
+        with col9:
+            if 'LJU' in specialized_reports and os.path.exists(specialized_reports['LJU']):
+                with open(specialized_reports['LJU'], "rb") as f:
+                    st.download_button("🏛️ LJU Details", f, f"DHL_LJU_details_{timestamp}.xlsx",
+                                      help="Ljubljana routes (LJ1 and LJ2)")
+            else:
+                st.write("No LJU shipments")
+        with col10:
+            if 'NMO' in specialized_reports and os.path.exists(specialized_reports['NMO']):
+                with open(specialized_reports['NMO'], "rb") as f:
+                    st.download_button("🌊 NMO Details", f, f"DHL_NMO_details_{timestamp}.xlsx",
+                                      help="Novo Mesto routes (NM1 and NM2)")
+            else:
+                st.write("No NMO shipments")
+        
+        col11, col12, col13, col14 = st.columns(4)
+        with col11:
+            if 'CEJ' in specialized_reports and os.path.exists(specialized_reports['CEJ']):
+                with open(specialized_reports['CEJ'], "rb") as f:
+                    st.download_button("🏭 CEJ Details", f, f"DHL_CEJ_details_{timestamp}.xlsx",
+                                      help="Celje routes (CE1 and CE2)")
+            else:
+                st.write("No CEJ shipments")
+        with col12:
+            if 'NGR' in specialized_reports and os.path.exists(specialized_reports['NGR']):
+                with open(specialized_reports['NGR'], "rb") as f:
+                    st.download_button("🌲 NGR Details", f, f"DHL_NGR_details_{timestamp}.xlsx",
+                                      help="Nova Gorica routes (NG1 and NG2)")
+            else:
+                st.write("No NGR shipments")
+        with col13:
+            if 'NGX' in specialized_reports and os.path.exists(specialized_reports['NGX']):
+                with open(specialized_reports['NGX'], "rb") as f:
+                    st.download_button("🚀 NGX Details", f, f"DHL_NGX_details_{timestamp}.xlsx",
+                                      help="Nova Gorica Express routes")
+            else:
+                st.write("No NGX shipments")
+        with col14:
+            if 'KOP' in specialized_reports and os.path.exists(specialized_reports['KOP']):
+                with open(specialized_reports['KOP'], "rb") as f:
+                    st.download_button("⛰️ KOP Details", f, f"DHL_KOP_details_{timestamp}.xlsx",
+                                      help="Koper routes (KP1)")
+            else:
+                st.write("No KOP shipments")
+
+        st.subheader("📋 Preview of Processed Data")
+        st.markdown("*Sample of processed shipment data with route assignments*")
+        st.dataframe(matched_manifest.head(10))
+
+    # Enhanced DHL Footer
+    st.markdown("""
+    <div class="dhl-footer">
+        <h3 style="margin: 0; font-size: 1.4rem;">DHL EXPRESS</h3>
+        <p style="margin: 0.5rem 0; font-style: italic; font-size: 1.1rem;">Excellence. Simply delivered.</p>
+        <hr style="margin: 1rem 0; border-color: rgba(255,255,255,0.3);">
+        <p style="margin: 0; font-size: 0.9rem;">Route Optimization System | Powered by Advanced Analytics</p>
+        <p style="margin: 0.5rem 0 0 0; font-size: 0.8rem; opacity: 0.8;">© 2025 DHL International GmbH | All Rights Reserved</p>
+    </div>
+    """, unsafe_allow_html=True)
+
+if __name__ == "__main__":
     main()
