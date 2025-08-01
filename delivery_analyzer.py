@@ -757,7 +757,7 @@ def generate_reports(
     priority_path = f"{output_path}/DHL_Priority_Shipments_{timestamp}.xlsx"
     multi_shipments_path = f"{output_path}/DHL_multi_shipments_{timestamp}.xlsx"
 
-    # 1. ROUTE SUMMARY REPORT WITH RESTORED ROUTE CALCULATIONS
+    # 1. ROUTE SUMMARY REPORT WITH ROUTE CALCULATIONS
     try:
         st.write("📊 Creating route summary report...")
         with pd.ExcelWriter(summary_path, engine='openpyxl') as writer:
@@ -1129,20 +1129,22 @@ def generate_reports(
     except Exception as e:
         st.error(f"❌ Failed to create WTH MPCS report: {str(e)}")
 
-    # 7. PRIORITY SHIPMENTS - ENHANCED WITH TDL (10:30) AND TDT/TDY (12:00) WITH YELLOW HEADERS
+    # 7. PRIORITY SHIPMENTS - ENHANCED WITH TDM (10:30) ADDED BELOW TDL
     try:
         st.write("🚨 Creating priority shipments report...")
         if 'PCC' in manifest_df.columns:
             manifest_df['PCC'] = manifest_df['PCC'].astype(str).str.strip().str.upper()
-            # Updated priority codes to include TDL: CMX/WMX, TDL, TDT/TDY
-            priority_codes = ['CMX', 'WMX', 'TDL', 'TDT', 'TDY']
+            # Updated priority codes to include TDM: CMX/WMX, TDL, TDM (new), TDT/TDY
+            priority_codes = ['CMX', 'WMX', 'TDL', 'M', 'TDT', 'TDY']
             priority_pccs = manifest_df[manifest_df['PCC'].isin(priority_codes)]
             
             if not priority_pccs.empty:
-                # Group by priority level - CMX/WMX at top, TDL in middle, TDT/TDY at bottom
+                # Group by priority level - CMX/WMX at top, TDL, TDM (new), TDT/TDY at bottom
                 group_cmx_wmx = priority_pccs[priority_pccs['PCC'].isin(['CMX', 'WMX'])].sort_values(
                     by=['CONSIGNEE_ZIP', 'MATCHED_ROUTE'], ascending=[True, True])
                 group_tdl = priority_pccs[priority_pccs['PCC'] == 'TDL'].sort_values(
+                    by=['CONSIGNEE_ZIP', 'MATCHED_ROUTE'], ascending=[True, True])
+                group_tdm = priority_pccs[priority_pccs['PCC'] == 'M'].sort_values(
                     by=['CONSIGNEE_ZIP', 'MATCHED_ROUTE'], ascending=[True, True])
                 group_tdt_tdy = priority_pccs[priority_pccs['PCC'].isin(['TDT', 'TDY'])].sort_values(
                     by=['CONSIGNEE_ZIP', 'MATCHED_ROUTE'], ascending=[True, True])
@@ -1186,7 +1188,7 @@ def generate_reports(
                 # Section 2: TDL (10:30) Priority Shipments
                 if not group_tdl.empty:
                     # Yellow highlighted header with bold text and (10:30) indicator
-                    header_cell = sheet.cell(row=current_row, column=1, value="TDL (10:30) Priority Shipments")
+                    header_cell = sheet.cell(row=current_row, column=1, value="TDL Priority Shipments (10:30)")
                     header_cell.font = header_font
                     header_cell.fill = dhl_yellow
                     current_row += 2
@@ -1205,10 +1207,32 @@ def generate_reports(
                     # Blank row for readability
                     current_row += 1
                 
-                # Section 3: TDT/TDY (12:00) Priority Shipments
+                # Section 3: TDM (10:30) Priority Shipments (NEW SECTION)
+                if not group_tdm.empty:
+                    # Yellow highlighted header with bold text and (10:30) indicator for TDM
+                    header_cell = sheet.cell(row=current_row, column=1, value="TDM Priority Shipments (10:30)")
+                    header_cell.font = header_font
+                    header_cell.fill = dhl_yellow
+                    current_row += 2
+                    
+                    # Column headers
+                    for col_idx, col in enumerate(cols, 1):
+                        sheet.cell(row=current_row, column=col_idx, value=col).font = header_font
+                    current_row += 1
+                    
+                    # Data rows
+                    for _, row in group_tdm.iterrows():
+                        for col_idx, value in enumerate(row[cols], 1):
+                            sheet.cell(row=current_row, column=col_idx, value=value)
+                        current_row += 1
+                    
+                    # Blank row for readability
+                    current_row += 1
+                
+                # Section 4: TDT/TDY (12:00) Priority Shipments
                 if not group_tdt_tdy.empty:
                     # Yellow highlighted header with bold text and (12:00) indicator
-                    header_cell = sheet.cell(row=current_row, column=1, value="TDT/TDY (12:00) Priority Shipments")
+                    header_cell = sheet.cell(row=current_row, column=1, value="TDT/TDY Priority Shipments (12:00)")
                     header_cell.font = header_font
                     header_cell.fill = dhl_yellow
                     current_row += 2
@@ -1225,7 +1249,7 @@ def generate_reports(
                         current_row += 1
                 
                 # If no priority shipments found
-                if group_cmx_wmx.empty and group_tdl.empty and group_tdt_tdy.empty:
+                if group_cmx_wmx.empty and group_tdl.empty and group_tdm.empty and group_tdt_tdy.empty:
                     sheet.cell(row=6, column=1, value="No priority shipments found")
                 
                 auto_adjust_column_width(sheet)
@@ -1519,7 +1543,7 @@ def main():
         <div class="dhl-success">
             <h2 style="color: white; margin: 0; font-size: 1.8rem;">🎉 DHL Route Analysis Complete!</h2>
             <p style="color: white; margin: 0.5rem 0 0 0; font-size: 1.1rem; font-style: italic;">Excellence. Simply delivered.</p>
-            <p style="color: white; margin: 0.5rem 0 0 0; font-size: 0.9rem;">All reports generated successfully with DHL branding, TDL priority shipments, and route optimization calculations</p>
+            <p style="color: white; margin: 0.5rem 0 0 0; font-size: 0.9rem;">All reports generated successfully with DHL branding, TDM (10:30) priority shipments, and route optimization calculations</p>
         </div>
         """, unsafe_allow_html=True)
         
@@ -1563,7 +1587,7 @@ def main():
         
         # Enhanced Standard Reports Section with File Existence Checks
         st.subheader("📊 DHL Standard Reports")
-        st.markdown("*Professional reports with enhanced DHL branding, TDL (10:30) and TDT/TDY (12:00) priority shipments, and route optimization calculations*")
+        st.markdown("*Professional reports with enhanced DHL branding, TDM (10:30) priority shipments, and route optimization calculations*")
         col1, col2, col3 = st.columns(3)
         with col1:
             summary_file = f"{output_path}/DHL_route_summary_{timestamp}.xlsx"
@@ -1605,7 +1629,7 @@ def main():
             if os.path.exists(priority_file):
                 with open(priority_file, "rb") as f:
                     st.download_button("🚨 Priority Shipments", f, f"DHL_Priority_Shipments_{timestamp}.xlsx",
-                                      help="CMX/WMX, TDL (10:30), and TDT/TDY (12:00) priority handling with yellow headers")
+                                      help="CMX/WMX, TDL (10:30), TDM (10:30), and TDT/TDY (12:00) priority handling with yellow headers")
             else:
                 st.error("❌ Priority Shipments file not found")
         with col6:
