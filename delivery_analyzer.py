@@ -1135,7 +1135,7 @@ def generate_reports(
         if 'PCC' in manifest_df.columns:
             manifest_df['PCC'] = manifest_df['PCC'].astype(str).str.strip().str.upper()
             # Updated priority codes to include TDM: CMX/WMX, TDL, TDM (new), TDT/TDY
-            priority_codes = ['CMX', 'WMX', 'TDL', 'M', 'TDT', 'TDY']
+            priority_codes = ['CMX', 'WMX', 'TDL', 'TDM', 'TDT', 'TDY']
             priority_pccs = manifest_df[manifest_df['PCC'].isin(priority_codes)]
             
             if not priority_pccs.empty:
@@ -1144,7 +1144,7 @@ def generate_reports(
                     by=['CONSIGNEE_ZIP', 'MATCHED_ROUTE'], ascending=[True, True])
                 group_tdl = priority_pccs[priority_pccs['PCC'] == 'TDL'].sort_values(
                     by=['CONSIGNEE_ZIP', 'MATCHED_ROUTE'], ascending=[True, True])
-                group_tdm = priority_pccs[priority_pccs['PCC'] == 'M'].sort_values(
+                group_tdm = priority_pccs[priority_pccs['PCC'] == 'TDM'].sort_values(
                     by=['CONSIGNEE_ZIP', 'MATCHED_ROUTE'], ascending=[True, True])
                 group_tdt_tdy = priority_pccs[priority_pccs['PCC'].isin(['TDT', 'TDY'])].sort_values(
                     by=['CONSIGNEE_ZIP', 'MATCHED_ROUTE'], ascending=[True, True])
