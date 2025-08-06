@@ -575,7 +575,7 @@ def match_address_to_route(manifest_df, street_city_routes, fallback_routes):
         consignee_street = str(row['CONSIGNEE_STREET']).lower()
         if ('elrad' in consignee_name and 'electronics' in consignee_name and 
             ('ljutomerska' in consignee_street and '47' in consignee_street)):
-            manifest_df.at[idx, 'MATCHED_ROUTE'] = 'MB1B'
+            manifest_df.at[idx, 'MATCHED_ROUTE'] = 'MB1A'
             manifest_df.at[idx, 'MATCH_METHOD'] = 'Direct Rule - Elrad'
             manifest_df.at[idx, 'MATCH_SCORE'] = 100.0
             continue
